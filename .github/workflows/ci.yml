@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build-linux:
+    name: Build (Linux)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install meson libbz2-dev
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Setup build
+        run: meson setup build
+      - name: Build library
+        run: meson compile -C build/ 
+
+  build-macos:
+    name: Build (macOS)
+    runs-on: macos-14
+
+    steps:
+      - name: Install dependencies
+        run: brew install meson ninja
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Setup build
+        run: meson setup build
+      - name: Build library
+        run: meson compile -C build/ 
+
+  build-windows:
+    name: Build (Windows MINGW64)
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Setup MSYS2 and install dependencies
+        uses: msys2/setup-msys2@v2
+        with:
+          install: >-
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-meson
+            mingw-w64-x86_64-bzip2
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Setup build
+        run: meson setup build
+      - name: Build library
+        run: meson compile -C build/ 
