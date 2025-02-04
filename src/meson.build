@@ -11,7 +11,6 @@ libfst_headers = [
 libfst_dependencies = [
     zlib_dep,
     bzip2_dep,
-    # judy_dep,
     # thread_dep,
 ]
 

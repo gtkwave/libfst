@@ -34,7 +34,6 @@
  * FST_DEBUG : not for production use, only enable for development
  * FST_REMOVE_DUPLICATE_VC : glitch removal (has writer performance impact)
  * HAVE_LIBPTHREAD -> FST_WRITER_PARALLEL : enables inclusion of parallel writer code
- * _WAVE_HAVE_JUDY : use Judy arrays instead of Jenkins (undefine if LGPL is not acceptable)
  *
  */
 
@@ -86,22 +85,13 @@ typedef int64_t fst_off_t;
 typedef off_t fst_off_t;
 #endif
 
-/* note that Judy versus Jenkins requires more experimentation: they are  */
-/* functionally equivalent though it appears Jenkins is slightly faster.  */
-/* in addition, Jenkins is not bound by the LGPL.                         */
-#ifdef _WAVE_HAVE_JUDY
-#include <Judy.h>
-#else
 /* should be more than enough for fstWriterSetSourceStem() */
 #define FST_PATH_HASHMASK ((1UL << 16) - 1)
 typedef const void *Pcvoid_t;
 typedef void *Pvoid_t;
 typedef void **PPvoid_t;
-#define JudyHSIns(a, b, c, d) JenkinsIns((a), (b), (c), (hashmask))
-#define JudyHSFreeArray(a, b) JenkinsFree((a), (hashmask))
 void JenkinsFree(void *base_i, uint32_t hashmask);
 void **JenkinsIns(void *base_i, const unsigned char *mem, uint32_t length, uint32_t hashmask);
-#endif
 
 #ifndef FST_WRITEX_DISABLE
 #define FST_WRITEX_MAX (64 * 1024)
@@ -1276,14 +1266,12 @@ static void fstWriterFlushContextPrivate(void *ctx)
 
 #ifndef FST_DYNAMIC_ALIAS_DISABLE
     Pvoid_t PJHSArray = (Pvoid_t)NULL;
-#ifndef _WAVE_HAVE_JUDY
     uint32_t hashmask = xc->maxhandle;
     hashmask |= hashmask >> 1;
     hashmask |= hashmask >> 2;
     hashmask |= hashmask >> 4;
     hashmask |= hashmask >> 8;
     hashmask |= hashmask >> 16;
-#endif
 #endif
 
     if ((xc->vchg_siz <= 1) || (xc->already_in_flush))
@@ -1482,7 +1470,7 @@ static void fstWriterFlushContextPrivate(void *ctx)
                     rc = compress2(dmem, &destlen, scratchpnt, wrlen, 4);
                     if (rc == Z_OK) {
 #ifndef FST_DYNAMIC_ALIAS_DISABLE
-                        PPvoid_t pv = JudyHSIns(&PJHSArray, dmem, destlen, NULL);
+                        PPvoid_t pv = JenkinsIns(&PJHSArray, dmem, destlen, hashmask);
                         if (*pv) {
                             uint32_t pvi = (intptr_t)(*pv);
                             vm4ip[2] = -pvi;
@@ -1497,7 +1485,7 @@ static void fstWriterFlushContextPrivate(void *ctx)
 #endif
                     } else {
 #ifndef FST_DYNAMIC_ALIAS_DISABLE
-                        PPvoid_t pv = JudyHSIns(&PJHSArray, scratchpnt, wrlen, NULL);
+                        PPvoid_t pv = JenkinsIns(&PJHSArray, scratchpnt, wrlen, hashmask);
                         if (*pv) {
                             uint32_t pvi = (intptr_t)(*pv);
                             vm4ip[2] = -pvi;
@@ -1528,7 +1516,7 @@ static void fstWriterFlushContextPrivate(void *ctx)
                                         : fastlz_compress(scratchpnt, wrlen, dmem);
                     if (rc < destlen) {
 #ifndef FST_DYNAMIC_ALIAS_DISABLE
-                        PPvoid_t pv = JudyHSIns(&PJHSArray, dmem, rc, NULL);
+                        PPvoid_t pv = JenkinsIns(&PJHSArray, dmem, rc, hashmask);
                         if (*pv) {
                             uint32_t pvi = (intptr_t)(*pv);
                             vm4ip[2] = -pvi;
@@ -1543,7 +1531,7 @@ static void fstWriterFlushContextPrivate(void *ctx)
 #endif
                     } else {
 #ifndef FST_DYNAMIC_ALIAS_DISABLE
-                        PPvoid_t pv = JudyHSIns(&PJHSArray, scratchpnt, wrlen, NULL);
+                        PPvoid_t pv = JenkinsIns(&PJHSArray, scratchpnt, wrlen, hashmask);
                         if (*pv) {
                             uint32_t pvi = (intptr_t)(*pv);
                             vm4ip[2] = -pvi;
@@ -1560,7 +1548,7 @@ static void fstWriterFlushContextPrivate(void *ctx)
                 }
             } else {
 #ifndef FST_DYNAMIC_ALIAS_DISABLE
-                PPvoid_t pv = JudyHSIns(&PJHSArray, scratchpnt, wrlen, NULL);
+                PPvoid_t pv = JenkinsIns(&PJHSArray, scratchpnt, wrlen, hashmask);
                 if (*pv) {
                     uint32_t pvi = (intptr_t)(*pv);
                     vm4ip[2] = -pvi;
@@ -1583,7 +1571,7 @@ static void fstWriterFlushContextPrivate(void *ctx)
     }
 
 #ifndef FST_DYNAMIC_ALIAS_DISABLE
-    JudyHSFreeArray(&PJHSArray, NULL);
+    JenkinsFree(&PJHSArray, hashmask);
 #endif
 
     free(packmem);
@@ -2233,10 +2221,8 @@ void fstWriterClose(void *ctx)
 #endif
 
         if (xc->path_array) {
-#ifndef _WAVE_HAVE_JUDY
             const uint32_t hashmask = FST_PATH_HASHMASK;
-#endif
-            JudyHSFreeArray(&(xc->path_array), NULL);
+            JenkinsFree(&(xc->path_array), hashmask);
         }
 
         free(xc->filename);
@@ -2343,18 +2329,11 @@ static void fstWriterSetSourceStem_2(void *ctx,
     if (xc && path && path[0]) {
         uint64_t sidx = 0;
         int slen = strlen(path);
-#ifndef _WAVE_HAVE_JUDY
         const uint32_t hashmask = FST_PATH_HASHMASK;
         const unsigned char *path2 = (const unsigned char *)path;
         PPvoid_t pv;
-#else
-        char *path2 =
-            (char *)alloca(slen + 1); /* judy lacks const qualifier in its JudyHSIns definition */
-        PPvoid_t pv;
-        strcpy(path2, path);
-#endif
 
-        pv = JudyHSIns(&(xc->path_array), path2, slen, NULL);
+        pv = JenkinsIns(&(xc->path_array), path2, slen, hashmask);
         if (*pv) {
             sidx = (intptr_t)(*pv);
         } else {
@@ -2364,22 +2343,10 @@ static void fstWriterSetSourceStem_2(void *ctx,
             *pv = (void *)(intptr_t)(xc->path_array_count);
 
             if (use_realpath) {
-                rp = fstRealpath(
-#ifndef _WAVE_HAVE_JUDY
-                    (const char *)
-#endif
-                        path2,
-                    NULL);
+                rp = fstRealpath((const char *)path2, NULL);
             }
 
-            fstWriterSetAttrGeneric(xc,
-                                    rp ? rp :
-#ifndef _WAVE_HAVE_JUDY
-                                       (const char *)
-#endif
-                                            path2,
-                                    FST_MT_PATHNAME,
-                                    sidx);
+            fstWriterSetAttrGeneric(xc, rp ? rp : (const char *)path2, FST_MT_PATHNAME, sidx);
 
             if (rp) {
                 free(rp);
@@ -6615,9 +6582,6 @@ process_value:
     /* return(NULL); */
 }
 
-/**********************************************************************/
-#ifndef _WAVE_HAVE_JUDY
-
 /***********************/
 /***                 ***/
 /***  jenkins hash   ***/
@@ -6839,8 +6803,6 @@ void JenkinsFree(void *base_i, uint32_t hashmask)
         *base = NULL;
     }
 }
-
-#endif
 
 /**********************************************************************/
 
