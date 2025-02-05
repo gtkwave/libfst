@@ -4,6 +4,7 @@ project(
     version: '1.0.0',
 )
 
+pkg = import('pkgconfig')
 cc = meson.get_compiler('c')
 
 # Dependencies
