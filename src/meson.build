@@ -18,9 +18,8 @@ libfst = library(
     'fst',
     sources: libfst_sources,
     dependencies: libfst_dependencies,
-    # include_directories: config_inc,
-    install: true,
     version: meson.project_version(),
+    install: true,
 )
 
 libfst_dep = declare_dependency(
@@ -29,3 +28,10 @@ libfst_dep = declare_dependency(
 )
 
 install_headers(libfst_headers, subdir: 'libfst')
+
+pkg.generate(
+    name: 'libfst',
+    libraries: libfst,
+    description: 'FST reader and writer library',
+    subdirs: 'libfst',
+)
