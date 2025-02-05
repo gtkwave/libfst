@@ -15,13 +15,15 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install meson libbz2-dev
+          sudo apt-get install meson libbz2-dev libglib2.0-dev
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Setup build
         run: meson setup build
       - name: Build library
         run: meson compile -C build/ 
+      - name: Run tests
+        run: meson test -C build/
 
   build-macos:
     name: Build (macOS)
@@ -36,6 +38,8 @@ jobs:
         run: meson setup build
       - name: Build library
         run: meson compile -C build/ 
+      - name: Run tests
+        run: meson test -C build/
 
   build-windows:
     name: Build (Windows MINGW64)
@@ -52,9 +56,12 @@ jobs:
             mingw-w64-x86_64-toolchain
             mingw-w64-x86_64-meson
             mingw-w64-x86_64-bzip2
+            mingw-w64-x86_64-glib2
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Setup build
         run: meson setup build
       - name: Build library
         run: meson compile -C build/ 
+      - name: Run tests
+        run: meson test -C build/
