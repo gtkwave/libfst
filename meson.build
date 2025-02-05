@@ -11,6 +11,7 @@ cc = meson.get_compiler('c')
 
 zlib_req = '>=1.2.0'
 bzip2_req = '>=1.0.0'
+glib_req = '>=2.64.0' # only used for tests
 
 zlib_dep = dependency('zlib', version: zlib_req)
 
@@ -21,4 +22,7 @@ if not bzip2_dep.found()
     bzip2_dep = cc.find_library('bz2', has_headers: 'bzlib.h')
 endif
 
+glib_dep = dependency('glib-2.0', version: glib_req, required: false)
+
 subdir('src')
+subdir('tests')
