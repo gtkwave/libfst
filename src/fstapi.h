@@ -420,6 +420,7 @@ void fstWriterEmitTimeChange(void *ctx, uint64_t tim);
 void fstWriterFlushContext(void *ctx);
 int fstWriterGetDumpSizeLimitReached(void *ctx);
 int fstWriterGetFseekFailed(void *ctx);
+int fstWriterGetFlushContextPending(void *ctx);
 void fstWriterSetAttrBegin(void *ctx,
                             enum fstAttrType attrtype,
                             int subtype,

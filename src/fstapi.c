@@ -2536,6 +2536,18 @@ int fstWriterGetFseekFailed(void *ctx)
     return (0);
 }
 
+static int fstWriterGetFlushContextPendingInternal(void *ctx)
+{
+    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
+    return (xc->vchg_siz >= xc->fst_break_size) || (xc->flush_context_pending);
+}
+
+int fstWriterGetFlushContextPending(void *ctx)
+{
+    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
+    return xc && !xc->is_initial_time && fstWriterGetFlushContextPendingInternal(ctx);
+}
+
 /*
  * writer attr/scope/var creation:
  * fstWriterCreateVar2() is used to dump VHDL or other languages, but the
@@ -3161,7 +3173,7 @@ void fstWriterEmitTimeChange(void *ctx, uint64_t tim)
             }
             xc->is_initial_time = 0;
         } else {
-            if ((xc->vchg_siz >= xc->fst_break_size) || (xc->flush_context_pending)) {
+            if (fstWriterGetFlushContextPendingInternal(ctx)) {
                 xc->flush_context_pending = 0;
                 fstWriterFlushContextPrivate(xc);
                 xc->tchn_cnt++;
