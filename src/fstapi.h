@@ -465,65 +465,71 @@ void fstWriterSetVersion(fstWriterContext *ctx, const char *vers);
 /*
  * reader functions
  */
-void fstReaderClose(void *ctx);
-void fstReaderClrFacProcessMask(void *ctx, fstHandle facidx);
-void fstReaderClrFacProcessMaskAll(void *ctx);
-uint64_t fstReaderGetAliasCount(void *ctx);
-const char *fstReaderGetCurrentFlatScope(void *ctx);
-void *fstReaderGetCurrentScopeUserInfo(void *ctx);
-int fstReaderGetCurrentScopeLen(void *ctx);
-const char *fstReaderGetDateString(void *ctx);
-int fstReaderGetDoubleEndianMatchState(void *ctx);
-uint64_t fstReaderGetDumpActivityChangeTime(void *ctx, uint32_t idx);
-unsigned char fstReaderGetDumpActivityChangeValue(void *ctx, uint32_t idx);
-uint64_t fstReaderGetEndTime(void *ctx);
-int fstReaderGetFacProcessMask(void *ctx, fstHandle facidx);
-int fstReaderGetFileType(void *ctx);
-int fstReaderGetFseekFailed(void *ctx);
-fstHandle fstReaderGetMaxHandle(void *ctx);
-uint64_t fstReaderGetMemoryUsedByWriter(void *ctx);
-uint32_t fstReaderGetNumberDumpActivityChanges(void *ctx);
-uint64_t fstReaderGetScopeCount(void *ctx);
-uint64_t fstReaderGetStartTime(void *ctx);
-signed char fstReaderGetTimescale(void *ctx);
-int64_t fstReaderGetTimezero(void *ctx);
-uint64_t fstReaderGetValueChangeSectionCount(void *ctx);
-char *fstReaderGetValueFromHandleAtTime(void *ctx, uint64_t tim, fstHandle facidx, char *buf);
-uint64_t fstReaderGetVarCount(void *ctx);
-const char *fstReaderGetVersionString(void *ctx);
-struct fstHier *fstReaderIterateHier(void *ctx);
-int fstReaderIterateHierRewind(void *ctx);
-int fstReaderIterBlocks(void *ctx,
+
+typedef struct fstReaderContext fstReaderContext;
+
+void fstReaderClose(fstReaderContext *ctx);
+void fstReaderClrFacProcessMask(fstReaderContext *ctx, fstHandle facidx);
+void fstReaderClrFacProcessMaskAll(fstReaderContext *ctx);
+uint64_t fstReaderGetAliasCount(fstReaderContext *ctx);
+const char *fstReaderGetCurrentFlatScope(fstReaderContext *ctx);
+void *fstReaderGetCurrentScopeUserInfo(fstReaderContext *ctx);
+int fstReaderGetCurrentScopeLen(fstReaderContext *ctx);
+const char *fstReaderGetDateString(fstReaderContext *ctx);
+int fstReaderGetDoubleEndianMatchState(fstReaderContext *ctx);
+uint64_t fstReaderGetDumpActivityChangeTime(fstReaderContext *ctx, uint32_t idx);
+unsigned char fstReaderGetDumpActivityChangeValue(fstReaderContext *ctx, uint32_t idx);
+uint64_t fstReaderGetEndTime(fstReaderContext *ctx);
+int fstReaderGetFacProcessMask(fstReaderContext *ctx, fstHandle facidx);
+int fstReaderGetFileType(fstReaderContext *ctx);
+int fstReaderGetFseekFailed(fstReaderContext *ctx);
+fstHandle fstReaderGetMaxHandle(fstReaderContext *ctx);
+uint64_t fstReaderGetMemoryUsedByWriter(fstReaderContext *ctx);
+uint32_t fstReaderGetNumberDumpActivityChanges(fstReaderContext *ctx);
+uint64_t fstReaderGetScopeCount(fstReaderContext *ctx);
+uint64_t fstReaderGetStartTime(fstReaderContext *ctx);
+signed char fstReaderGetTimescale(fstReaderContext *ctx);
+int64_t fstReaderGetTimezero(fstReaderContext *ctx);
+uint64_t fstReaderGetValueChangeSectionCount(fstReaderContext *ctx);
+char *fstReaderGetValueFromHandleAtTime(fstReaderContext *ctx,
+                                        uint64_t tim,
+                                        fstHandle facidx,
+                                        char *buf);
+uint64_t fstReaderGetVarCount(fstReaderContext *ctx);
+const char *fstReaderGetVersionString(fstReaderContext *ctx);
+struct fstHier *fstReaderIterateHier(fstReaderContext *ctx);
+int fstReaderIterateHierRewind(fstReaderContext *ctx);
+int fstReaderIterBlocks(fstReaderContext *ctx,
                         void (*value_change_callback)(void *user_callback_data_pointer,
-                                                        uint64_t time,
-                                                        fstHandle facidx,
-                                                        const unsigned char *value),
+                                                      uint64_t time,
+                                                      fstHandle facidx,
+                                                      const unsigned char *value),
                         void *user_callback_data_pointer,
                         FILE *vcdhandle);
-int fstReaderIterBlocks2(void *ctx,
-                            void (*value_change_callback)(void *user_callback_data_pointer,
-                                                        uint64_t time,
-                                                        fstHandle facidx,
-                                                        const unsigned char *value),
-                            void (*value_change_callback_varlen)(void *user_callback_data_pointer,
-                                                                uint64_t time,
-                                                                fstHandle facidx,
-                                                                const unsigned char *value,
-                                                                uint32_t len),
-                            void *user_callback_data_pointer,
-                            FILE *vcdhandle);
-void fstReaderIterBlocksSetNativeDoublesOnCallback(void *ctx, int enable);
-void *fstReaderOpen(const char *nam);
-void *fstReaderOpenForUtilitiesOnly(void);
-const char *fstReaderPopScope(void *ctx);
-int fstReaderProcessHier(void *ctx, FILE *vcdhandle);
-const char *fstReaderPushScope(void *ctx, const char *nam, void *user_info);
-void fstReaderResetScope(void *ctx);
-void fstReaderSetFacProcessMask(void *ctx, fstHandle facidx);
-void fstReaderSetFacProcessMaskAll(void *ctx);
-void fstReaderSetLimitTimeRange(void *ctx, uint64_t start_time, uint64_t end_time);
-void fstReaderSetUnlimitedTimeRange(void *ctx);
-void fstReaderSetVcdExtensions(void *ctx, int enable);
+int fstReaderIterBlocks2(fstReaderContext *ctx,
+                         void (*value_change_callback)(void *user_callback_data_pointer,
+                                                       uint64_t time,
+                                                       fstHandle facidx,
+                                                       const unsigned char *value),
+                         void (*value_change_callback_varlen)(void *user_callback_data_pointer,
+                                                              uint64_t time,
+                                                              fstHandle facidx,
+                                                              const unsigned char *value,
+                                                              uint32_t len),
+                         void *user_callback_data_pointer,
+                         FILE *vcdhandle);
+void fstReaderIterBlocksSetNativeDoublesOnCallback(fstReaderContext *ctx, int enable);
+fstReaderContext *fstReaderOpen(const char *nam);
+fstReaderContext *fstReaderOpenForUtilitiesOnly(void);
+const char *fstReaderPopScope(fstReaderContext *ctx);
+int fstReaderProcessHier(fstReaderContext *ctx, FILE *vcdhandle);
+const char *fstReaderPushScope(fstReaderContext *ctx, const char *nam, void *user_info);
+void fstReaderResetScope(fstReaderContext *ctx);
+void fstReaderSetFacProcessMask(fstReaderContext *ctx, fstHandle facidx);
+void fstReaderSetFacProcessMaskAll(fstReaderContext *ctx);
+void fstReaderSetLimitTimeRange(fstReaderContext *ctx, uint64_t start_time, uint64_t end_time);
+void fstReaderSetUnlimitedTimeRange(fstReaderContext *ctx);
+void fstReaderSetVcdExtensions(fstReaderContext *ctx, int enable);
 
 /*
  * utility functions

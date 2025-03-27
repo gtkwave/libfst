@@ -23,7 +23,7 @@ int main(int argc, char **argv)
 
     // Read generated FST file
 
-    void *reader = fstReaderOpen("out.fst");
+    fstReaderContext *reader = fstReaderOpen("out.fst");
     g_assert_true(reader != NULL);
 
     g_assert_cmpint(fstReaderGetStartTime(reader), ==, 0);
