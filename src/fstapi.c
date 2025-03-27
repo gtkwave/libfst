@@ -1113,10 +1113,9 @@ static void fstDetermineBreakSize(struct fstWriterContext *xc)
 /*
  * file creation and close
  */
-void *fstWriterCreate(const char *nam, int use_compressed_hier)
+fstWriterContext *fstWriterCreate(const char *nam, int use_compressed_hier)
 {
-    struct fstWriterContext *xc =
-        (struct fstWriterContext *)calloc(1, sizeof(struct fstWriterContext));
+    fstWriterContext *xc = (fstWriterContext *)calloc(1, sizeof(fstWriterContext));
 
     xc->compress_hier = use_compressed_hier;
     fstDetermineBreakSize(xc);
@@ -1175,10 +1174,8 @@ void *fstWriterCreate(const char *nam, int use_compressed_hier)
 /*
  * generation and writing out of value change data sections
  */
-static void fstWriterEmitSectionHeader(void *ctx)
+static void fstWriterEmitSectionHeader(fstWriterContext *xc)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
-
     if (xc) {
         unsigned long destlen;
         unsigned char *dmem;
@@ -1235,9 +1232,9 @@ static void fstWriterEmitSectionHeader(void *ctx)
  * be synced up with time changes
  */
 #ifdef FST_WRITER_PARALLEL
-static void fstWriterFlushContextPrivate2(void *ctx)
+static void fstWriterFlushContextPrivate2(fstWriterContext *xc)
 #else
-static void fstWriterFlushContextPrivate(void *ctx)
+static void fstWriterFlushContextPrivate(fstWriterContext *xc)
 #endif
 {
 #ifdef FST_DEBUG
@@ -1257,7 +1254,6 @@ static void fstWriterFlushContextPrivate(void *ctx)
     unsigned char *packmem;
     unsigned int packmemlen;
     uint32_t *vm4ip;
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
 #ifdef FST_WRITER_PARALLEL
     struct fstWriterContext *xc2 = xc->xc_parent;
 #else
@@ -1752,9 +1748,8 @@ static void fstWriterFlushContextPrivate(void *ctx)
 }
 
 #ifdef FST_WRITER_PARALLEL
-static void *fstWriterFlushContextPrivate1(void *ctx)
+static void *fstWriterFlushContextPrivate1(fstWriterContext *xc)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     struct fstWriterContext *xc_parent;
 
     pthread_mutex_lock(&(xc->xc_parent->mutex));
@@ -1775,10 +1770,8 @@ static void *fstWriterFlushContextPrivate1(void *ctx)
     return (NULL);
 }
 
-static void fstWriterFlushContextPrivate(void *ctx)
+static void fstWriterFlushContextPrivate(fstWriterContext *xc)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
-
     if (xc->parallel_enabled) {
         struct fstWriterContext *xc2 =
             (struct fstWriterContext *)malloc(sizeof(struct fstWriterContext));
@@ -1852,9 +1845,8 @@ static void fstWriterFlushContextPrivate(void *ctx)
 /*
  * queues up a flush context operation
  */
-void fstWriterFlushContext(void *ctx)
+void fstWriterFlushContext(fstWriterContext *xc)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     if (xc) {
         if (xc->tchn_idx > 1) {
             xc->flush_context_pending = 1;
@@ -1865,10 +1857,8 @@ void fstWriterFlushContext(void *ctx)
 /*
  * close out FST file
  */
-void fstWriterClose(void *ctx)
+void fstWriterClose(fstWriterContext *xc)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
-
 #ifdef FST_WRITER_PARALLEL
     if (xc) {
         pthread_mutex_lock(&xc->mutex);
@@ -2234,9 +2224,8 @@ void fstWriterClose(void *ctx)
 /*
  * functions to set miscellaneous header/block information
  */
-void fstWriterSetDate(void *ctx, const char *dat)
+void fstWriterSetDate(fstWriterContext *xc, const char *dat)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     if (xc) {
         char s[FST_HDR_DATE_SIZE];
         fst_off_t fpos = ftello(xc->handle);
@@ -2251,9 +2240,8 @@ void fstWriterSetDate(void *ctx, const char *dat)
     }
 }
 
-void fstWriterSetVersion(void *ctx, const char *vers)
+void fstWriterSetVersion(fstWriterContext *xc, const char *vers)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     if (xc && vers) {
         char s[FST_HDR_SIM_VERSION_SIZE];
         fst_off_t fpos = ftello(xc->handle);
@@ -2268,9 +2256,8 @@ void fstWriterSetVersion(void *ctx, const char *vers)
     }
 }
 
-void fstWriterSetFileType(void *ctx, enum fstFileType filetype)
+void fstWriterSetFileType(fstWriterContext *xc, enum fstFileType filetype)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     if (xc) {
         if (/*(filetype >= FST_FT_MIN) &&*/ (filetype <= FST_FT_MAX)) {
             fst_off_t fpos = ftello(xc->handle);
@@ -2285,9 +2272,11 @@ void fstWriterSetFileType(void *ctx, enum fstFileType filetype)
     }
 }
 
-static void fstWriterSetAttrDoubleArgGeneric(void *ctx, int typ, uint64_t arg1, uint64_t arg2)
+static void fstWriterSetAttrDoubleArgGeneric(fstWriterContext *xc,
+                                             int typ,
+                                             uint64_t arg1,
+                                             uint64_t arg2)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     if (xc) {
         unsigned char buf[11]; /* ceil(64/7) = 10 + null term */
         unsigned char *pnt = fstCopyVarint64ToRight(buf, arg1);
@@ -2300,9 +2289,8 @@ static void fstWriterSetAttrDoubleArgGeneric(void *ctx, int typ, uint64_t arg1, 
     }
 }
 
-static void fstWriterSetAttrGeneric(void *ctx, const char *comm, int typ, uint64_t arg)
+static void fstWriterSetAttrGeneric(fstWriterContext *xc, const char *comm, int typ, uint64_t arg)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     if (xc && comm) {
         char *s = strdup(comm);
         char *sf = s;
@@ -2318,14 +2306,12 @@ static void fstWriterSetAttrGeneric(void *ctx, const char *comm, int typ, uint64
     }
 }
 
-static void fstWriterSetSourceStem_2(void *ctx,
+static void fstWriterSetSourceStem_2(fstWriterContext *xc,
                                      const char *path,
                                      unsigned int line,
                                      unsigned int use_realpath,
                                      int typ)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
-
     if (xc && path && path[0]) {
         uint64_t sidx = 0;
         int slen = strlen(path);
@@ -2357,7 +2343,7 @@ static void fstWriterSetSourceStem_2(void *ctx,
     }
 }
 
-void fstWriterSetSourceStem(void *ctx,
+void fstWriterSetSourceStem(fstWriterContext *ctx,
                             const char *path,
                             unsigned int line,
                             unsigned int use_realpath)
@@ -2365,7 +2351,7 @@ void fstWriterSetSourceStem(void *ctx,
     fstWriterSetSourceStem_2(ctx, path, line, use_realpath, FST_MT_SOURCESTEM);
 }
 
-void fstWriterSetSourceInstantiationStem(void *ctx,
+void fstWriterSetSourceInstantiationStem(fstWriterContext *ctx,
                                          const char *path,
                                          unsigned int line,
                                          unsigned int use_realpath)
@@ -2373,24 +2359,23 @@ void fstWriterSetSourceInstantiationStem(void *ctx,
     fstWriterSetSourceStem_2(ctx, path, line, use_realpath, FST_MT_SOURCEISTEM);
 }
 
-void fstWriterSetComment(void *ctx, const char *comm)
+void fstWriterSetComment(fstWriterContext *ctx, const char *comm)
 {
     fstWriterSetAttrGeneric(ctx, comm, FST_MT_COMMENT, 0);
 }
 
-void fstWriterSetValueList(void *ctx, const char *vl)
+void fstWriterSetValueList(fstWriterContext *ctx, const char *vl)
 {
     fstWriterSetAttrGeneric(ctx, vl, FST_MT_VALUELIST, 0);
 }
 
-void fstWriterSetEnvVar(void *ctx, const char *envvar)
+void fstWriterSetEnvVar(fstWriterContext *ctx, const char *envvar)
 {
     fstWriterSetAttrGeneric(ctx, envvar, FST_MT_ENVVAR, 0);
 }
 
-void fstWriterSetTimescale(void *ctx, int ts)
+void fstWriterSetTimescale(fstWriterContext *xc, int ts)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     if (xc) {
         fst_off_t fpos = ftello(xc->handle);
         fstWriterFseeko(xc, xc->handle, FST_HDR_OFFS_TIMESCALE, SEEK_SET);
@@ -2400,9 +2385,8 @@ void fstWriterSetTimescale(void *ctx, int ts)
     }
 }
 
-void fstWriterSetTimescaleFromString(void *ctx, const char *s)
+void fstWriterSetTimescaleFromString(fstWriterContext *xc, const char *s)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     if (xc && s) {
         int mat = 0;
         int seconds_exp = -9;
@@ -2458,13 +2442,12 @@ void fstWriterSetTimescaleFromString(void *ctx, const char *s)
             seconds_exp += 2;
         }
 
-        fstWriterSetTimescale(ctx, seconds_exp);
+        fstWriterSetTimescale(xc, seconds_exp);
     }
 }
 
-void fstWriterSetTimezero(void *ctx, int64_t tim)
+void fstWriterSetTimezero(fstWriterContext *xc, int64_t tim)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     if (xc) {
         fst_off_t fpos = ftello(xc->handle);
         fstWriterFseeko(xc, xc->handle, FST_HDR_OFFS_TIMEZERO, SEEK_SET);
@@ -2474,26 +2457,23 @@ void fstWriterSetTimezero(void *ctx, int64_t tim)
     }
 }
 
-void fstWriterSetPackType(void *ctx, enum fstWriterPackType typ)
+void fstWriterSetPackType(fstWriterContext *xc, enum fstWriterPackType typ)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     if (xc) {
         xc->fastpack = (typ != FST_WR_PT_ZLIB);
         xc->fourpack = (typ == FST_WR_PT_LZ4);
     }
 }
 
-void fstWriterSetRepackOnClose(void *ctx, int enable)
+void fstWriterSetRepackOnClose(fstWriterContext *xc, int enable)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     if (xc) {
         xc->repack_on_close = (enable != 0);
     }
 }
 
-void fstWriterSetParallelMode(void *ctx, int enable)
+void fstWriterSetParallelMode(fstWriterContext *xc, int enable)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     if (xc) {
         xc->parallel_was_enabled |= xc->parallel_enabled; /* make sticky */
         xc->parallel_enabled = (enable != 0);
@@ -2508,17 +2488,15 @@ void fstWriterSetParallelMode(void *ctx, int enable)
     }
 }
 
-void fstWriterSetDumpSizeLimit(void *ctx, uint64_t numbytes)
+void fstWriterSetDumpSizeLimit(fstWriterContext *xc, uint64_t numbytes)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     if (xc) {
         xc->dump_size_limit = numbytes;
     }
 }
 
-int fstWriterGetDumpSizeLimitReached(void *ctx)
+int fstWriterGetDumpSizeLimitReached(fstWriterContext *xc)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     if (xc) {
         return (xc->size_limit_locked != 0);
     }
@@ -2526,9 +2504,8 @@ int fstWriterGetDumpSizeLimitReached(void *ctx)
     return (0);
 }
 
-int fstWriterGetFseekFailed(void *ctx)
+int fstWriterGetFseekFailed(fstWriterContext *xc)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     if (xc) {
         return (xc->fseek_failed != 0);
     }
@@ -2536,14 +2513,13 @@ int fstWriterGetFseekFailed(void *ctx)
     return (0);
 }
 
-static int fstWriterGetFlushContextPendingInternal(struct fstWriterContext *xc)
+static int fstWriterGetFlushContextPendingInternal(fstWriterContext *xc)
 {
     return (xc->vchg_siz >= xc->fst_break_size) || (xc->flush_context_pending);
 }
 
-int fstWriterGetFlushContextPending(void *ctx)
+int fstWriterGetFlushContextPending(fstWriterContext *xc)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     return xc && !xc->is_initial_time && fstWriterGetFlushContextPendingInternal(xc);
 }
 
@@ -2552,7 +2528,7 @@ int fstWriterGetFlushContextPending(void *ctx)
  * fstWriterCreateVar2() is used to dump VHDL or other languages, but the
  * underlying variable needs to map to Verilog/SV via the proper fstVarType vt
  */
-fstHandle fstWriterCreateVar2(void *ctx,
+fstHandle fstWriterCreateVar2(fstWriterContext *ctx,
                               enum fstVarType vt,
                               enum fstVarDir vd,
                               uint32_t len,
@@ -2569,14 +2545,13 @@ fstHandle fstWriterCreateVar2(void *ctx,
     return (fstWriterCreateVar(ctx, vt, vd, len, nam, aliasHandle));
 }
 
-fstHandle fstWriterCreateVar(void *ctx,
+fstHandle fstWriterCreateVar(fstWriterContext *xc,
                              enum fstVarType vt,
                              enum fstVarDir vd,
                              uint32_t len,
                              const char *nam,
                              fstHandle aliasHandle)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     unsigned int i;
     int nlen, is_real;
 
@@ -2660,13 +2635,11 @@ fstHandle fstWriterCreateVar(void *ctx,
     return (0);
 }
 
-void fstWriterSetScope(void *ctx,
+void fstWriterSetScope(fstWriterContext *xc,
                        enum fstScopeType scopetype,
                        const char *scopename,
                        const char *scopecomp)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
-
     if (xc) {
         fputc(FST_ST_VCD_SCOPE, xc->hier_handle);
         if (/*(scopetype < FST_ST_VCD_MODULE) ||*/ (scopetype > FST_ST_MAX)) {
@@ -2692,24 +2665,20 @@ void fstWriterSetScope(void *ctx,
     }
 }
 
-void fstWriterSetUpscope(void *ctx)
+void fstWriterSetUpscope(fstWriterContext *xc)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
-
     if (xc) {
         fputc(FST_ST_VCD_UPSCOPE, xc->hier_handle);
         xc->hier_file_len++;
     }
 }
 
-void fstWriterSetAttrBegin(void *ctx,
+void fstWriterSetAttrBegin(fstWriterContext *xc,
                            enum fstAttrType attrtype,
                            int subtype,
                            const char *attrname,
                            uint64_t arg)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
-
     if (xc) {
         fputc(FST_ST_GEN_ATTRBEGIN, xc->hier_handle);
         if (/*(attrtype < FST_AT_MISC) ||*/ (attrtype > FST_AT_MAX)) {
@@ -2750,17 +2719,15 @@ void fstWriterSetAttrBegin(void *ctx,
     }
 }
 
-void fstWriterSetAttrEnd(void *ctx)
+void fstWriterSetAttrEnd(fstWriterContext *xc)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
-
     if (xc) {
         fputc(FST_ST_GEN_ATTREND, xc->hier_handle);
         xc->hier_file_len++;
     }
 }
 
-fstEnumHandle fstWriterCreateEnumTable(void *ctx,
+fstEnumHandle fstWriterCreateEnumTable(fstWriterContext *xc,
                                        const char *name,
                                        uint32_t elem_count,
                                        unsigned int min_valbits,
@@ -2779,9 +2746,7 @@ fstEnumHandle fstWriterCreateEnumTable(void *ctx,
     int pos = 0;
     char *attr_str = NULL;
 
-    if (ctx && name && literal_arr && val_arr && (elem_count != 0)) {
-        struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
-
+    if (xc && name && literal_arr && val_arr && (elem_count != 0)) {
         uint32_t i;
 
         name_len = strlen(name);
@@ -2866,9 +2831,8 @@ fstEnumHandle fstWriterCreateEnumTable(void *ctx,
     return (handle);
 }
 
-void fstWriterEmitEnumTableRef(void *ctx, fstEnumHandle handle)
+void fstWriterEmitEnumTableRef(fstWriterContext *xc, fstEnumHandle handle)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     if (xc && handle) {
         fstWriterSetAttrBegin(xc, FST_AT_MISC, FST_MT_ENUMTABLE, NULL, handle);
     }
@@ -2877,9 +2841,8 @@ void fstWriterEmitEnumTableRef(void *ctx, fstEnumHandle handle)
 /*
  * value and time change emission
  */
-void fstWriterEmitValueChange(void *ctx, fstHandle handle, const void *val)
+void fstWriterEmitValueChange(fstWriterContext *xc, fstHandle handle, const void *val)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     const unsigned char *buf = (const unsigned char *)val;
     uint32_t offs;
     int len;
@@ -2987,7 +2950,7 @@ void fstWriterEmitValueChange(void *ctx, fstHandle handle, const void *val)
     }
 }
 
-void fstWriterEmitValueChange32(void *ctx, fstHandle handle, uint32_t bits, uint32_t val)
+void fstWriterEmitValueChange32(fstWriterContext *ctx, fstHandle handle, uint32_t bits, uint32_t val)
 {
     char buf[32];
     char *s = buf;
@@ -2997,7 +2960,8 @@ void fstWriterEmitValueChange32(void *ctx, fstHandle handle, uint32_t bits, uint
     }
     fstWriterEmitValueChange(ctx, handle, buf);
 }
-void fstWriterEmitValueChange64(void *ctx, fstHandle handle, uint32_t bits, uint64_t val)
+
+void fstWriterEmitValueChange64(fstWriterContext *ctx, fstHandle handle, uint32_t bits, uint64_t val)
 {
     char buf[64];
     char *s = buf;
@@ -3007,11 +2971,11 @@ void fstWriterEmitValueChange64(void *ctx, fstHandle handle, uint32_t bits, uint
     }
     fstWriterEmitValueChange(ctx, handle, buf);
 }
-void fstWriterEmitValueChangeVec32(void *ctx, fstHandle handle, uint32_t bits, const uint32_t *val)
+
+void fstWriterEmitValueChangeVec32(fstWriterContext *xc, fstHandle handle, uint32_t bits, const uint32_t *val)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     if (FST_UNLIKELY(bits <= 32)) {
-        fstWriterEmitValueChange32(ctx, handle, bits, val[0]);
+        fstWriterEmitValueChange32(xc, handle, bits, val[0]);
     } else if (FST_LIKELY(xc)) {
         int bq = bits / 32;
         int br = bits & 31;
@@ -3047,14 +3011,13 @@ void fstWriterEmitValueChangeVec32(void *ctx, fstHandle handle, uint32_t bits, c
                 s += 4;
             }
         }
-        fstWriterEmitValueChange(ctx, handle, xc->outval_mem);
+        fstWriterEmitValueChange(xc, handle, xc->outval_mem);
     }
 }
-void fstWriterEmitValueChangeVec64(void *ctx, fstHandle handle, uint32_t bits, const uint64_t *val)
+void fstWriterEmitValueChangeVec64(fstWriterContext *xc, fstHandle handle, uint32_t bits, const uint64_t *val)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     if (FST_UNLIKELY(bits <= 64)) {
-        fstWriterEmitValueChange64(ctx, handle, bits, val[0]);
+        fstWriterEmitValueChange64(xc, handle, bits, val[0]);
     } else if (FST_LIKELY(xc)) {
         int bq = bits / 64;
         int br = bits & 63;
@@ -3090,16 +3053,15 @@ void fstWriterEmitValueChangeVec64(void *ctx, fstHandle handle, uint32_t bits, c
                 s += 4;
             }
         }
-        fstWriterEmitValueChange(ctx, handle, xc->outval_mem);
+        fstWriterEmitValueChange(xc, handle, xc->outval_mem);
     }
 }
 
-void fstWriterEmitVariableLengthValueChange(void *ctx,
+void fstWriterEmitVariableLengthValueChange(fstWriterContext *xc,
                                             fstHandle handle,
                                             const void *val,
                                             uint32_t len)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     const unsigned char *buf = (const unsigned char *)val;
 
     if (FST_LIKELY((xc) && (handle <= xc->maxhandle))) {
@@ -3143,9 +3105,8 @@ void fstWriterEmitVariableLengthValueChange(void *ctx,
     }
 }
 
-void fstWriterEmitTimeChange(void *ctx, uint64_t tim)
+void fstWriterEmitTimeChange(fstWriterContext *xc, uint64_t tim)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     unsigned int i;
     int skip = 0;
     if (xc) {
@@ -3189,10 +3150,8 @@ void fstWriterEmitTimeChange(void *ctx, uint64_t tim)
     }
 }
 
-void fstWriterEmitDumpActive(void *ctx, int enable)
+void fstWriterEmitDumpActive(fstWriterContext *xc, int enable)
 {
-    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
-
     if (xc) {
         struct fstBlackoutChain *b =
             (struct fstBlackoutChain *)calloc(1, sizeof(struct fstBlackoutChain));

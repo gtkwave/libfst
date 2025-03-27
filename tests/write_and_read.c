@@ -3,9 +3,12 @@
 
 int main(int argc, char **argv)
 {
+    (void)argc;
+    (void)argv;
+
     // Write simple FST file
 
-    void *writer = fstWriterCreate("out.fst", 1);
+    fstWriterContext *writer = fstWriterCreate("out.fst", 1);
     g_assert_true(writer != NULL);
 
     fstHandle var = fstWriterCreateVar(writer, FST_VT_VCD_WIRE, FST_VD_IMPLICIT, 1, "var", 0);
