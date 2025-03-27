@@ -3890,6 +3890,7 @@ struct fstHier *fstReaderIterateHier(fstReaderContext *xc)
     fstHandle alias;
     char *pnt;
     int ch;
+    int unnamed_scope_idx = 0;
 
     if (!xc)
         return (NULL);
@@ -3921,6 +3922,9 @@ struct fstHier *fstReaderIterateHier(fstReaderContext *xc)
                         pnt[cl++] = ch;
                     }
                 }; /* scopename */
+                if (!cl) {
+                    cl = snprintf(pnt, FST_ID_NAM_SIZ, "$unnamed_scope_%d", unnamed_scope_idx++);
+                }
                 pnt[cl] = 0;
                 xc->hier.u.scope.name_length = cl;
 
@@ -4059,6 +4063,7 @@ int fstReaderProcessHier(fstReaderContext *xc, FILE *fv)
     uint64_t attrarg;
     fstHandle maxhandle_scanbuild;
     int cl;
+    int unnamed_scope_idx = 0;
 
     if (!xc)
         return (0);
@@ -4194,6 +4199,9 @@ int fstReaderProcessHier(fstReaderContext *xc, FILE *fv)
                         pnt[cl++] = ch;
                     }
                 }; /* scopename */
+                if (!cl) {
+                    cl = snprintf(pnt, FST_ID_NAM_SIZ, "$unnamed_scope_%d", unnamed_scope_idx++);
+                }
                 pnt[cl] = 0;
                 while (fgetc(xc->fh)) {
                 }; /* scopecomp */
