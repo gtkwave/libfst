@@ -27,6 +27,8 @@ libfst_dep = declare_dependency(
     include_directories: '.',
 )
 
+meson.override_dependency('libfst', libfst_dep)
+
 install_headers(libfst_headers, subdir: 'libfst')
 
 pkg.generate(
