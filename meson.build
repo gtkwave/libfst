@@ -7,6 +7,8 @@ project(
 pkg = import('pkgconfig')
 cc = meson.get_compiler('c')
 
+add_project_arguments('-D_GNU_SOURCE', language: 'c')
+
 # Dependencies
 
 zlib_req = '>=1.2.0'
