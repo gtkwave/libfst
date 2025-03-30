@@ -59,21 +59,6 @@
 #include <windows.h>
 #endif
 
-#ifdef HAVE_ALLOCA_H
-#include <alloca.h>
-#elif defined(__GNUC__)
-#ifndef __MINGW32__
-#ifndef alloca
-#define alloca __builtin_alloca
-#endif
-#else
-#include <malloc.h>
-#endif
-#elif defined(_MSC_VER)
-#include <malloc.h>
-#define alloca _alloca
-#endif
-
 #ifndef PATH_MAX
 #define PATH_MAX (4096)
 #endif
