@@ -26,5 +26,18 @@ endif
 
 glib_dep = dependency('glib-2.0', version: glib_req, required: false)
 
+thread_dep = dependency('threads', required: false)
+
+# Generate config.h
+
+config = configuration_data()
+config.set('FST_WRITER_PARALLEL', thread_dep.found())
+config.set('HAVE_LIBPTHREAD', thread_dep.found())
+
+configure_file(output: 'config.h', configuration: config)
+config_inc = include_directories('.')
+
+add_project_arguments('-DFST_INCLUDE_CONFIG', language : 'c')
+
 subdir('src')
 subdir('tests')
