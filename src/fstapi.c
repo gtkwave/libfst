@@ -37,10 +37,9 @@
  *
  */
 
-// #ifndef FST_CONFIG_INCLUDE
-// # define FST_CONFIG_INCLUDE <config.h>
-// #endif
-// #include FST_CONFIG_INCLUDE
+#ifdef FST_INCLUDE_CONFIG
+#include <config.h>
+#endif
 
 #include "fstapi.h"
 #include "fastlz.h"
@@ -1748,8 +1747,9 @@ static void fstWriterFlushContextPrivate(fstWriterContext *xc)
 }
 
 #ifdef FST_WRITER_PARALLEL
-static void *fstWriterFlushContextPrivate1(fstWriterContext *xc)
+static void *fstWriterFlushContextPrivate1(void *ctx)
 {
+    struct fstWriterContext *xc = (struct fstWriterContext *)ctx;
     struct fstWriterContext *xc_parent;
 
     pthread_mutex_lock(&(xc->xc_parent->mutex));
@@ -5964,7 +5964,10 @@ static char *fstExtractRvatDataFromFrame(fstReaderContext *xc, fstHandle facidx,
     return (buf);
 }
 
-char *fstReaderGetValueFromHandleAtTime(fstReaderContext *xc, uint64_t tim, fstHandle facidx, char *buf)
+char *fstReaderGetValueFromHandleAtTime(fstReaderContext *xc,
+                                        uint64_t tim,
+                                        fstHandle facidx,
+                                        char *buf)
 {
     fst_off_t blkpos = 0, prev_blkpos;
     uint64_t beg_tim, end_tim, beg_tim2, end_tim2;

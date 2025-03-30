@@ -11,7 +11,7 @@ libfst_headers = [
 libfst_dependencies = [
     zlib_dep,
     bzip2_dep,
-    # thread_dep,
+    thread_dep,
 ]
 
 libfst = library(
@@ -20,6 +20,7 @@ libfst = library(
     dependencies: libfst_dependencies,
     version: meson.project_version(),
     install: true,
+    include_directories: config_inc,
 )
 
 libfst_dep = declare_dependency(
