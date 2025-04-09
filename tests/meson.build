@@ -1,5 +1,6 @@
 libfst_tests = [
     'write_and_read',
+    'empty_file',
 ]
 
 foreach test : libfst_tests
