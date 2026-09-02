@@ -6092,7 +6092,7 @@ char *fstReaderGetValueFromHandleAtTime(fstReaderContext *xc,
                                         fstHandle facidx,
                                         char *buf)
 {
-    fst_off_t blkpos = 0, prev_blkpos;
+    fst_off_t blkpos = 0;
     uint64_t beg_tim, end_tim, beg_tim2, end_tim2;
     int sectype;
 #ifdef FST_DEBUG
@@ -6136,7 +6136,7 @@ char *fstReaderGetValueFromHandleAtTime(fstReaderContext *xc,
     xc->rvat_chain_pos_valid = 0;
 
     for (;;) {
-        fstReaderFseeko(xc, xc->f, (prev_blkpos = blkpos), SEEK_SET);
+        fstReaderFseeko(xc, xc->f, blkpos, SEEK_SET);
 
         sectype = fgetc(xc->f);
         seclen = fstReaderUint64(xc->f);
@@ -6158,23 +6158,31 @@ char *fstReaderGetValueFromHandleAtTime(fstReaderContext *xc,
         if ((beg_tim <= tim) && (tim <= end_tim)) {
             if ((tim == end_tim) && (tim != xc->end_time)) {
                 fst_off_t cached_pos = ftello(xc->f);
-                fstReaderFseeko(xc, xc->f, blkpos, SEEK_SET);
+                fst_off_t next_blkpos = blkpos + seclen;
+                int sectype2;
+                uint64_t seclen2;
 
-                sectype = fgetc(xc->f);
-                seclen = fstReaderUint64(xc->f);
+                fstReaderFseeko(xc, xc->f, next_blkpos, SEEK_SET);
+
+                sectype2 = fgetc(xc->f);
+                seclen2 = fstReaderUint64(xc->f);
 
                 beg_tim2 = fstReaderUint64(xc->f);
                 end_tim2 = fstReaderUint64(xc->f);
 
-                if (((sectype != FST_BL_VCDATA) && (sectype != FST_BL_VCDATA_DYN_ALIAS) &&
-                     (sectype != FST_BL_VCDATA_DYN_ALIAS2)) ||
-                    (!seclen) || (beg_tim2 != tim)) {
-                    blkpos = prev_blkpos;
-                    break;
+                if (((sectype2 != FST_BL_VCDATA) && (sectype2 != FST_BL_VCDATA_DYN_ALIAS) &&
+                     (sectype2 != FST_BL_VCDATA_DYN_ALIAS2)) ||
+                    (!seclen2) || (beg_tim2 != tim)) {
+                    /* keep this section, and the read position within it */
+                    fstReaderFseeko(xc, xc->f, cached_pos, SEEK_SET);
+                } else {
+                    /* next section have the time, use it instead */
+                    sectype = sectype2;
+                    seclen = seclen2;
+                    beg_tim = beg_tim2;
+                    end_tim = end_tim2;
+                    blkpos = next_blkpos + 1;
                 }
-                beg_tim = beg_tim2;
-                end_tim = end_tim2;
-                fstReaderFseeko(xc, xc->f, cached_pos, SEEK_SET);
             }
             break;
         }
