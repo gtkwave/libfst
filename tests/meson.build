@@ -26,6 +26,7 @@ malformed_cases = [
     'chain_table_unterminated',
     'chain_uncompresses_past_traversal',
     'chain_varint_pair_past_traversal',
+    'hierarchy_lz4duo_shorter_than_its_varint',
     'rvat_chain_table_overrun',
     'time_chain_empty',
     'time_chain_short',

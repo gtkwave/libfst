@@ -3788,7 +3788,8 @@ static int fstReaderRecreateHierFile(struct fstReaderContext *xc)
             }
             gzclose(zhandle);
         } else if (htyp == FST_BL_HIER_LZ4DUO) {
-            unsigned char *lz4_cmem = (unsigned char *)malloc(clen);
+            /* extra null byte to catch any unterminated varint */
+            unsigned char *lz4_cmem = (unsigned char *)calloc(1, (uint64_t)clen + 1);
             unsigned char *lz4_ucmem = (unsigned char *)malloc(uclen);
             unsigned char *lz4_ucmem2;
             uint64_t uclen2;
@@ -3797,8 +3798,10 @@ static int fstReaderRecreateHierFile(struct fstReaderContext *xc)
             fstFread(lz4_cmem, clen, 1, xc->f);
 
             uclen2 = fstGetVarint64(lz4_cmem, &skiplen2);
+
             lz4_ucmem2 = (unsigned char *)malloc(uclen2);
             pass_status =
+                (skiplen2 <= (int)clen) &&
                 (uclen2 == (uint64_t)LZ4_decompress_safe_partial((char *)lz4_cmem + skiplen2,
                                                                  (char *)lz4_ucmem2,
                                                                  clen - skiplen2,

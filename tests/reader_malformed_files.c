@@ -47,6 +47,11 @@
  *       continuation bytes, including the last byte, so its varint is
  *       unterminated
  *
+ *   hierarchy_lz4duo_shorter_than_its_varint.fst
+ *       a doubly LZ4 packed hierarchy section whose data is the single byte
+ *       0x81, a continuation byte, so the varint in front of its data does not
+ *       end inside the section
+ *
  *   rvat_chain_table_overrun.fst
  *       the same overrun as chain_table_overrun.fst reached through
  *       fstReaderGetValueFromHandleAtTime() rather than fstReaderIterBlocks2().
