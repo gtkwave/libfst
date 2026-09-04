@@ -33,6 +33,11 @@
  *       starts runs off the end of the table, reads as the zero that means
  *       "this entry is two varints", and the second varint is not there
  *
+ *   chain_table_svarint_overlong.fst
+ *       a chain table holding two signed varints: one nine bytes long, ending
+ *       at bit 63 with its sign bit set, and one eleven bytes long, with bit
+ *       63 set and bits past the 64th
+ *
  *   chain_table_unterminated.fst
  *       the last byte of a chain table asks for another byte, so a parse that
  *       stops on reaching the end of the table exactly runs past it
