@@ -3526,14 +3526,14 @@ void fstReaderClrFacProcessMask(fstReaderContext *xc, fstHandle facidx)
 
 void fstReaderSetFacProcessMaskAll(fstReaderContext *xc)
 {
-    if (xc) {
+    if (xc && xc->process_mask) {
         memset(xc->process_mask, 0xff, (xc->maxhandle + 7) / 8);
     }
 }
 
 void fstReaderClrFacProcessMaskAll(fstReaderContext *xc)
 {
-    if (xc) {
+    if (xc && xc->process_mask) {
         memset(xc->process_mask, 0x00, (xc->maxhandle + 7) / 8);
     }
 }
@@ -6178,8 +6178,8 @@ char *fstReaderGetValueFromHandleAtTime(fstReaderContext *xc,
     fprintf(stderr, FST_APIMESS "indx_pos: %d (%d bytes)\n", (int)indx_pos, (int)chain_clen);
 #endif
     chain_cmem = (unsigned char *)malloc(chain_clen);
-    if(!chain_cmem) {
-        return(NULL);
+    if (!chain_cmem) {
+        return (NULL);
     }
     fstReaderFseeko(xc, xc->f, indx_pos, SEEK_SET);
     fstFread(chain_cmem, chain_clen, 1, xc->f);
@@ -6219,7 +6219,7 @@ char *fstReaderGetValueFromHandleAtTime(fstReaderContext *xc,
 
     if (!xc->rvat_chain_table || !xc->rvat_chain_table_lengths) {
         free(chain_cmem);
-        return(NULL);
+        return (NULL);
     }
 
     pnt = chain_cmem;
