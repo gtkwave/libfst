@@ -47,6 +47,14 @@
  *       continuation bytes, including the last byte, so its varint is
  *       unterminated
  *
+ *   frame_maxhandle_too_big.fst
+ *       a section's frame says it holds values for two handles, while the file
+ *       has one
+ *
+ *   frame_real_narrower_than_eight.fst
+ *       a real declared two bytes wide, so its value in the frame is two bytes
+ *       long
+ *
  *   rvat_chain_table_overrun.fst
  *       the same overrun as chain_table_overrun.fst reached through
  *       fstReaderGetValueFromHandleAtTime() rather than fstReaderIterBlocks2().
