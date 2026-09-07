@@ -47,6 +47,13 @@
  *       continuation bytes, including the last byte, so its varint is
  *       unterminated
  *
+ *   geometry_short.fst
+ *       a geometry section that announces three handles but holds the width
+ *       of only one
+ *
+ *   geometry_varint_unterminated.fst
+ *       a geometry section whose last byte is a varint continuation byte
+ *
  *   rvat_chain_table_overrun.fst
  *       the same overrun as chain_table_overrun.fst reached through
  *       fstReaderGetValueFromHandleAtTime() rather than fstReaderIterBlocks2().
