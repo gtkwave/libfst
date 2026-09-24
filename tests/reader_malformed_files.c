@@ -69,6 +69,10 @@
  *       nothing compared against the buffer.  One file per decompressor: LZ4
  *       writes eight bytes at a time past the end, fastlz one
  *
+ *   traversal_size_wraps.fst
+ *       the second of two value change sections declares a traversal size of
+ *       2**64 - 67
+ *
  *   uncompressed_chain_past_traversal.fst
  *       a value change section declaring it needs 7 bytes of memory to read,
  *       whose twenty handles share one uncompressed chain 19 bytes long and so

@@ -5025,7 +5025,7 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
     fst_off_t indx_pntr, indx_pos;
     fst_off_t *chain_table = NULL;
     uint32_t *chain_table_lengths = NULL;
-    unsigned char *chain_cmem;
+    unsigned char *chain_cmem = NULL;
     long chain_clen;
     fstHandle idx, i;
     uint64_t vc_maxhandle_largest = 0;
@@ -5103,8 +5103,18 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
             }
         }
 
-        mem_required_for_traversal =
-            fstReaderUint64(xc->f) + 66; /* add in potential fastlz overhead */
+        {
+            uint64_t declared_traversal_len = fstReaderUint64(xc->f);
+
+            /* check for overflow */
+            if (declared_traversal_len >= (UINT64_MAX - 66)) {
+                goto block_err;
+            }
+
+            /* add in potential fastlz overhead */
+            mem_required_for_traversal = declared_traversal_len + 66;
+        }
+
         /* extra null byte to catch any unterminated varint */
         mem_for_traversal = (unsigned char *)calloc(1, mem_required_for_traversal + 1);
 #ifdef FST_DEBUG
@@ -6014,6 +6024,7 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
     block_err:
         free(tc_head);
         free(chain_cmem);
+        chain_cmem = NULL;
         free(mc_mem);
         mc_mem = NULL;
         mc_mem_len = 0;

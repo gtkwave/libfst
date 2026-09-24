@@ -31,6 +31,7 @@ malformed_cases = [
     'time_chain_short',
     'traversal_buffer_smaller_than_chain',
     'traversal_buffer_smaller_than_chain_fastlz',
+    'traversal_size_wraps',
     'uncompressed_chain_past_traversal',
     'uncompressed_chain_shorter_than_its_varint',
     'value_change_past_traversal',
