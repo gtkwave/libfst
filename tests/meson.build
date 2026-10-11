@@ -1,4 +1,5 @@
 libfst_tests = [
+    'chain_table_across_sections',
     'empty_file',
     'mask_no_variables',
     'write_and_read',
@@ -12,4 +13,29 @@ foreach test : libfst_tests
     )
 
     test(test, exe)
+endforeach
+
+# The malformed file corpus is read from the source tree rather than written by
+# the test, so the case file is handed to it as an argument.  One test per case,
+# so that a file the reader does not survive names itself and stops nothing else.
+malformed_cases = [
+    'chain_table_overrun',
+    'chain_table_pair_unterminated',
+    'chain_table_unterminated',
+    'rvat_chain_table_overrun',
+]
+
+malformed = executable(
+    'test-reader_malformed_files',
+    'reader_malformed_files.c',
+    dependencies: [libfst_dep, glib_dep],
+)
+
+foreach case : malformed_cases
+    test(
+        'malformed_' + case,
+        malformed,
+        args: [meson.current_source_dir() / 'data' / 'malformed' / (case + '.fst')],
+        suite: 'malformed',
+    )
 endforeach
