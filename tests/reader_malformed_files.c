@@ -19,6 +19,10 @@
  * malformed_cases in tests/meson.build, with a note here saying what is wrong
  * with it.
  *
+ *   chain_shorter_than_its_length.fst
+ *       a handle's value change chain is shorter than the varint at the front
+ *       of it, so the length of the data after that varint came out negative
+ *
  *   chain_table_overrun.fst
  *       the chain table of a value change section describes more handles than
  *       the section announced, which walked the table it is parsed into past
@@ -33,9 +37,34 @@
  *       the last byte of a chain table asks for another byte, so a parse that
  *       stops on reaching the end of the table exactly runs past it
  *
+ *   chain_uncompresses_past_traversal.fst
+ *       a value change chain says it uncompresses to more than the memory the
+ *       section said reading it needs, so the decompressor wrote past the
+ *       buffer -- the start of the write was checked, the length was not
+ *
  *   rvat_chain_table_overrun.fst
  *       the same overrun as chain_table_overrun.fst reached through
  *       fstReaderGetValueFromHandleAtTime() rather than fstReaderIterBlocks2().
+ *
+ *   traversal_buffer_smaller_than_chain.fst
+ *   traversal_buffer_smaller_than_chain_fastlz.fst
+ *       a valid file whose value change sections declare a traversal size of
+ *       zero, so the buffer the chains are decompressed into is the 66 bytes
+ *       of fastlz overhead alone.  The check on the offset of each chain
+ *       passed, because the chain that overflows starts two bytes in; the
+ *       length written there is the length the chain claims for itself, which
+ *       nothing compared against the buffer.  One file per decompressor: LZ4
+ *       writes eight bytes at a time past the end, fastlz one
+ *
+ *   uncompressed_chain_past_traversal.fst
+ *       a value change section declaring it needs 7 bytes of memory to read,
+ *       whose twenty handles share one uncompressed chain 19 bytes long and so
+ *       need 360
+ *
+ *   uncompressed_chain_shorter_than_its_varint.fst
+ *       an uncompressed value change chain that the chain table gives four
+ *       bytes and whose leading length varint is spelled in five, so the data
+ *       after that varint is minus one byte long
  */
 
 #include <fstapi.h>

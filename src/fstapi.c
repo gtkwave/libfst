@@ -5515,8 +5515,8 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
                         unsigned long destlen = val;
                         unsigned long sourcelen = chain_table_lengths[i];
 
-                        if (traversal_mem_offs >= mem_required_for_traversal) {
-                            chk_report_abort("TALOS-2023-1785");
+                        if (((uint64_t)traversal_mem_offs + destlen) > mem_required_for_traversal) {
+                            goto block_err;
                         }
 
                         if (mc_mem_len < chain_table_lengths[i]) {
@@ -5554,11 +5554,17 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
                         length_remaining[i] = val;
                         traversal_mem_offs += val;
                     } else {
-                        int destlen = chain_table_lengths[i] - skiplen;
+                        uint32_t destlen;
                         unsigned char *mu = mem_for_traversal + traversal_mem_offs;
 
-                        if (traversal_mem_offs >= mem_required_for_traversal) {
-                            chk_report_abort("TALOS-2023-1785");
+                        if (chain_table_lengths[i] <= skiplen) {
+                            goto block_err;
+                        }
+
+                        destlen = chain_table_lengths[i] - skiplen;
+
+                        if (((uint64_t)traversal_mem_offs + destlen) > mem_required_for_traversal) {
+                            goto block_err;
                         }
 
                         fstFread(mu, destlen, 1, xc->f);
@@ -5597,8 +5603,9 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
             }
         }
 
-        free(mc_mem); /* there is no usage below for this, no real need to clear out mc_mem or
-                         mc_mem_len */
+        free(mc_mem);
+        mc_mem = NULL;
+        mc_mem_len = 0;
 
         for (i = 0; i < tsec_nitems; i++) {
             uint32_t tdelta;
@@ -5943,6 +5950,9 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
     block_err:
         free(tc_head);
         free(chain_cmem);
+        free(mc_mem);
+        mc_mem = NULL;
+        mc_mem_len = 0;
         free(mem_for_traversal);
         mem_for_traversal = NULL;
 
@@ -6368,8 +6378,22 @@ process_value:
             /* data to process is for(j=0;j<destlen;j++) in mu[j] */
             xc->rvat_chain_mem = mu;
         } else {
-            int destlen = xc->rvat_chain_table_lengths[facidx] - skiplen;
-            unsigned char *mu = (unsigned char *)malloc(xc->rvat_chain_len = destlen);
+            uint32_t destlen;
+            unsigned char *mu;
+
+            if (xc->rvat_chain_table_lengths[facidx] <= skiplen) {
+                fstReaderDeallocateRvatData(xc);
+                return (NULL);
+            }
+
+            destlen = xc->rvat_chain_table_lengths[facidx] - skiplen;
+            xc->rvat_chain_len = destlen;
+
+            mu = (unsigned char *)malloc(destlen);
+            if (!mu) {
+                fstReaderDeallocateRvatData(xc);
+                return (NULL);
+            }
             fstFread(mu, destlen, 1, xc->f);
             /* data to process is for(j=0;j<destlen;j++) in mu[j] */
             xc->rvat_chain_mem = mu;
