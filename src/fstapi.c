@@ -3526,14 +3526,14 @@ void fstReaderClrFacProcessMask(fstReaderContext *xc, fstHandle facidx)
 
 void fstReaderSetFacProcessMaskAll(fstReaderContext *xc)
 {
-    if (xc) {
+    if (xc && xc->process_mask) {
         memset(xc->process_mask, 0xff, (xc->maxhandle + 7) / 8);
     }
 }
 
 void fstReaderClrFacProcessMaskAll(fstReaderContext *xc)
 {
-    if (xc) {
+    if (xc && xc->process_mask) {
         memset(xc->process_mask, 0x00, (xc->maxhandle + 7) / 8);
     }
 }
@@ -4829,6 +4829,160 @@ void fstReaderClose(fstReaderContext *xc)
  * read processing
  */
 
+/*
+ * Parses the chain table of a value change section: for each handle, where in
+ * the section its value change data starts, and how long it is.  Multiple
+ * handles may share the same value change data.
+ *
+ * chain_cmem is the memory containing the chain table to be parsed. It must
+ * have a null byte at index chain_clen to catch any unterminated varint at the
+ * end of the input data.
+ *
+ * Returns 0 if the table has more entries than vc_maxhandle, or if the table
+ * is corrupt and can't be parsed, otherwise 1.  On success *idx_out is the
+ * number of entries.
+ */
+static int fstReaderParseChainTable(unsigned char *chain_cmem,
+                                    long chain_clen,
+                                    int is_alias2,
+                                    fstHandle vc_maxhandle,
+                                    fst_off_t vc_len,
+                                    fst_off_t *chain_table,
+                                    uint32_t *chain_table_lengths,
+                                    fstHandle *idx_out)
+{
+    unsigned char *pnt = chain_cmem;
+    unsigned char *end = chain_cmem + chain_clen;
+    fstHandle idx = 0;
+    fstHandle pidx = 0;
+    uint64_t pval = 0;
+    uint32_t prev_alias = 0;
+    fstHandle i;
+
+    /* check if there is space for `n` more entries */
+#define FST_CHAIN_ROOM(n) (((uint64_t)idx + (uint64_t)(n)) <= (uint64_t)vc_maxhandle)
+
+    if (is_alias2) {
+        while (pnt < end) {
+            int skiplen;
+
+            if (*pnt & 0x01) {
+                int64_t shval = fstGetSVarint64(pnt, &skiplen) >> 1;
+
+                if (!FST_CHAIN_ROOM(1)) {
+                    return (0);
+                }
+
+                if (shval > 0) {
+                    pval = chain_table[idx] = pval + shval;
+                    if (idx) {
+                        chain_table_lengths[pidx] = pval - chain_table[pidx];
+                    }
+                    pidx = idx++;
+                } else if (shval < 0) {
+                    chain_table[idx] =
+                        0; /* need to explicitly zero as calloc above might not run */
+                    chain_table_lengths[idx] = prev_alias =
+                        shval; /* because during this loop iter would give stale data! */
+                    idx++;
+                } else {
+                    chain_table[idx] =
+                        0; /* need to explicitly zero as calloc above might not run */
+                    chain_table_lengths[idx] =
+                        prev_alias; /* because during this loop iter would give stale data! */
+                    idx++;
+                }
+            } else {
+                uint64_t val = fstGetVarint32(pnt, &skiplen);
+                fstHandle loopcnt = val >> 1;
+
+                if (!FST_CHAIN_ROOM(loopcnt)) {
+                    return (0);
+                }
+
+                for (i = 0; i < loopcnt; i++) {
+                    chain_table[idx++] = 0;
+                }
+            }
+
+            pnt += skiplen;
+        }
+    } else {
+        while (pnt < end) {
+            int skiplen;
+            uint64_t val = fstGetVarint32(pnt, &skiplen);
+
+            if (!val) {
+                if (!FST_CHAIN_ROOM(1)) {
+                    return (0);
+                }
+
+                pnt += skiplen;
+
+                if (pnt >= end) {
+                    return (0);
+                }
+
+                val = fstGetVarint32(pnt, &skiplen);
+                chain_table[idx] = 0; /* need to explicitly zero as calloc above might not run */
+                chain_table_lengths[idx] =
+                    -val; /* because during this loop iter would give stale data! */
+                idx++;
+            } else if (val & 1) {
+                if (!FST_CHAIN_ROOM(1)) {
+                    return (0);
+                }
+
+                pval = chain_table[idx] = pval + (val >> 1);
+                if (idx) {
+                    chain_table_lengths[pidx] = pval - chain_table[pidx];
+                }
+                pidx = idx++;
+            } else {
+                fstHandle loopcnt = val >> 1;
+
+                if (!FST_CHAIN_ROOM(loopcnt)) {
+                    return (0);
+                }
+
+                for (i = 0; i < loopcnt; i++) {
+                    chain_table[idx++] = 0;
+                }
+            }
+
+            pnt += skiplen;
+        }
+    }
+
+#undef FST_CHAIN_ROOM
+
+    /* the entry the room check kept back, so that the last chain a length was
+       written to is as long as the distance from it to the end of the data */
+    chain_table[idx] = vc_len;
+    chain_table_lengths[pidx] = chain_table[idx] - chain_table[pidx];
+
+    for (i = 0; i < idx; i++) {
+        int32_t v32 = chain_table_lengths[i];
+        if ((v32 < 0) && (!chain_table[i])) {
+            v32 = -v32;
+            v32--;
+            if (((uint32_t)v32) < i) /* sanity check */
+            {
+                chain_table[i] = chain_table[v32];
+                chain_table_lengths[i] = chain_table_lengths[v32];
+            }
+        }
+    }
+
+#ifdef FST_DEBUG
+    fprintf(stderr, FST_APIMESS "decompressed chain idx len: %" PRIu32 "\n", idx);
+#endif
+
+    *idx_out = idx;
+
+    return (1);
+}
+
 /* normal read which re-interleaves the value change data */
 int fstReaderIterBlocks(fstReaderContext *ctx,
                         void (*value_change_callback)(void *user_callback_data_pointer,
@@ -4870,10 +5024,8 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
     fst_off_t *chain_table = NULL;
     uint32_t *chain_table_lengths = NULL;
     unsigned char *chain_cmem;
-    unsigned char *pnt;
     long chain_clen;
-    fstHandle idx, pidx = 0, i;
-    uint64_t pval;
+    fstHandle idx, i;
     uint64_t vc_maxhandle_largest = 0;
     uint64_t tsec_uclen = 0, tsec_clen = 0;
     int sectype;
@@ -5277,7 +5429,8 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
 #ifdef FST_DEBUG
         fprintf(stderr, FST_APIMESS "indx_pos: %d (%d bytes)\n", (int)indx_pos, (int)chain_clen);
 #endif
-        chain_cmem = (unsigned char *)malloc(chain_clen);
+        /* extra null byte to catch any unterminated varint */
+        chain_cmem = (unsigned char *)calloc(1, chain_clen + 1);
         if (!chain_cmem)
             goto block_err;
         fstReaderFseeko(xc, xc->f, indx_pos, SEEK_SET);
@@ -5325,108 +5478,16 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
         if (!chain_table || !chain_table_lengths)
             goto block_err;
 
-        pnt = chain_cmem;
-        idx = 0;
-        pval = 0;
-
-        if (sectype == FST_BL_VCDATA_DYN_ALIAS2) {
-            uint32_t prev_alias = 0;
-
-            do {
-                int skiplen;
-
-                if (*pnt & 0x01) {
-                    int64_t shval = fstGetSVarint64(pnt, &skiplen) >> 1;
-                    if (shval > 0) {
-                        pval = chain_table[idx] = pval + shval;
-                        if (idx) {
-                            chain_table_lengths[pidx] = pval - chain_table[pidx];
-                        }
-                        pidx = idx++;
-                    } else if (shval < 0) {
-                        chain_table[idx] =
-                            0; /* need to explicitly zero as calloc above might not run */
-                        chain_table_lengths[idx] = prev_alias =
-                            shval; /* because during this loop iter would give stale data! */
-                        idx++;
-                    } else {
-                        chain_table[idx] =
-                            0; /* need to explicitly zero as calloc above might not run */
-                        chain_table_lengths[idx] =
-                            prev_alias; /* because during this loop iter would give stale data! */
-                        idx++;
-                    }
-                } else {
-                    uint64_t val = fstGetVarint32(pnt, &skiplen);
-
-                    fstHandle loopcnt = val >> 1;
-                    if ((idx + loopcnt - 1) > vc_maxhandle) /* TALOS-2023-1789 */
-                    {
-                        chk_report_abort("TALOS-2023-1789");
-                    }
-
-                    for (i = 0; i < loopcnt; i++) {
-                        chain_table[idx++] = 0;
-                    }
-                }
-
-                pnt += skiplen;
-            } while (pnt != (chain_cmem + chain_clen));
-        } else {
-            do {
-                int skiplen;
-                uint64_t val = fstGetVarint32(pnt, &skiplen);
-
-                if (!val) {
-                    pnt += skiplen;
-                    val = fstGetVarint32(pnt, &skiplen);
-                    chain_table[idx] =
-                        0; /* need to explicitly zero as calloc above might not run */
-                    chain_table_lengths[idx] =
-                        -val; /* because during this loop iter would give stale data! */
-                    idx++;
-                } else if (val & 1) {
-                    pval = chain_table[idx] = pval + (val >> 1);
-                    if (idx) {
-                        chain_table_lengths[pidx] = pval - chain_table[pidx];
-                    }
-                    pidx = idx++;
-                } else {
-                    fstHandle loopcnt = val >> 1;
-
-                    if ((idx + loopcnt - 1) > vc_maxhandle) /* TALOS-2023-1789 */
-                    {
-                        chk_report_abort("TALOS-2023-1789");
-                    }
-
-                    for (i = 0; i < loopcnt; i++) {
-                        chain_table[idx++] = 0;
-                    }
-                }
-
-                pnt += skiplen;
-            } while (pnt != (chain_cmem + chain_clen));
+        if (!fstReaderParseChainTable(chain_cmem,
+                                      chain_clen,
+                                      sectype == FST_BL_VCDATA_DYN_ALIAS2,
+                                      vc_maxhandle,
+                                      indx_pos - vc_start,
+                                      chain_table,
+                                      chain_table_lengths,
+                                      &idx)) {
+            goto block_err;
         }
-
-        chain_table[idx] = indx_pos - vc_start;
-        chain_table_lengths[pidx] = chain_table[idx] - chain_table[pidx];
-
-        for (i = 0; i < idx; i++) {
-            int32_t v32 = chain_table_lengths[i];
-            if ((v32 < 0) && (!chain_table[i])) {
-                v32 = -v32;
-                v32--;
-                if (((uint32_t)v32) < i) /* sanity check */
-                {
-                    chain_table[i] = chain_table[v32];
-                    chain_table_lengths[i] = chain_table_lengths[v32];
-                }
-            }
-        }
-
-#ifdef FST_DEBUG
-        fprintf(stderr, FST_APIMESS "decompressed chain idx len: %" PRIu32 "\n", idx);
-#endif
 
         mc_mem_len = 16384;
         mc_mem = (unsigned char *)malloc(mc_mem_len); /* buffer for compressed reads */
@@ -5454,8 +5515,8 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
                         unsigned long destlen = val;
                         unsigned long sourcelen = chain_table_lengths[i];
 
-                        if (traversal_mem_offs >= mem_required_for_traversal) {
-                            chk_report_abort("TALOS-2023-1785");
+                        if (((uint64_t)traversal_mem_offs + destlen) > mem_required_for_traversal) {
+                            goto block_err;
                         }
 
                         if (mc_mem_len < chain_table_lengths[i]) {
@@ -5493,11 +5554,17 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
                         length_remaining[i] = val;
                         traversal_mem_offs += val;
                     } else {
-                        int destlen = chain_table_lengths[i] - skiplen;
+                        uint32_t destlen;
                         unsigned char *mu = mem_for_traversal + traversal_mem_offs;
 
-                        if (traversal_mem_offs >= mem_required_for_traversal) {
-                            chk_report_abort("TALOS-2023-1785");
+                        if (chain_table_lengths[i] <= skiplen) {
+                            goto block_err;
+                        }
+
+                        destlen = chain_table_lengths[i] - skiplen;
+
+                        if (((uint64_t)traversal_mem_offs + destlen) > mem_required_for_traversal) {
+                            goto block_err;
                         }
 
                         fstFread(mu, destlen, 1, xc->f);
@@ -5536,8 +5603,9 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
             }
         }
 
-        free(mc_mem); /* there is no usage below for this, no real need to clear out mc_mem or
-                         mc_mem_len */
+        free(mc_mem);
+        mc_mem = NULL;
+        mc_mem_len = 0;
 
         for (i = 0; i < tsec_nitems; i++) {
             uint32_t tdelta;
@@ -5882,6 +5950,9 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
     block_err:
         free(tc_head);
         free(chain_cmem);
+        free(mc_mem);
+        mc_mem = NULL;
+        mc_mem_len = 0;
         free(mem_for_traversal);
         mem_for_traversal = NULL;
 
@@ -5971,9 +6042,7 @@ char *fstReaderGetValueFromHandleAtTime(fstReaderContext *xc,
     fst_off_t indx_pntr, indx_pos;
     long chain_clen;
     unsigned char *chain_cmem;
-    unsigned char *pnt;
-    fstHandle idx, pidx = 0, i;
-    uint64_t pval;
+    fstHandle idx, i;
 
     if ((!xc) || (!facidx) || (facidx > xc->maxhandle) || (!buf) ||
         (!xc->signal_lens[facidx - 1])) {
@@ -6177,9 +6246,11 @@ char *fstReaderGetValueFromHandleAtTime(fstReaderContext *xc,
 #ifdef FST_DEBUG
     fprintf(stderr, FST_APIMESS "indx_pos: %d (%d bytes)\n", (int)indx_pos, (int)chain_clen);
 #endif
-    chain_cmem = (unsigned char *)malloc(chain_clen);
-    if(!chain_cmem) {
-        return(NULL);
+    /* extra null byte to catch any unterminated varint */
+    chain_cmem = (unsigned char *)calloc(1, chain_clen + 1);
+    if (!chain_cmem) {
+        fstReaderDeallocateRvatData(xc);
+        return (NULL);
     }
     fstReaderFseeko(xc, xc->f, indx_pos, SEEK_SET);
     fstFread(chain_cmem, chain_clen, 1, xc->f);
@@ -6219,109 +6290,23 @@ char *fstReaderGetValueFromHandleAtTime(fstReaderContext *xc,
 
     if (!xc->rvat_chain_table || !xc->rvat_chain_table_lengths) {
         free(chain_cmem);
-        return(NULL);
+        return (NULL);
     }
 
-    pnt = chain_cmem;
-    idx = 0;
-    pval = 0;
-
-    if (sectype == FST_BL_VCDATA_DYN_ALIAS2) {
-        uint32_t prev_alias = 0;
-
-        do {
-            int skiplen;
-
-            if (*pnt & 0x01) {
-                int64_t shval = fstGetSVarint64(pnt, &skiplen) >> 1;
-                if (shval > 0) {
-                    pval = xc->rvat_chain_table[idx] = pval + shval;
-                    if (idx) {
-                        xc->rvat_chain_table_lengths[pidx] = pval - xc->rvat_chain_table[pidx];
-                    }
-                    pidx = idx++;
-                } else if (shval < 0) {
-                    xc->rvat_chain_table[idx] =
-                        0; /* need to explicitly zero as calloc above might not run */
-                    xc->rvat_chain_table_lengths[idx] = prev_alias =
-                        shval; /* because during this loop iter would give stale data! */
-                    idx++;
-                } else {
-                    xc->rvat_chain_table[idx] =
-                        0; /* need to explicitly zero as calloc above might not run */
-                    xc->rvat_chain_table_lengths[idx] =
-                        prev_alias; /* because during this loop iter would give stale data! */
-                    idx++;
-                }
-            } else {
-                uint64_t val = fstGetVarint32(pnt, &skiplen);
-
-                fstHandle loopcnt = val >> 1;
-                if ((idx + loopcnt - 1) > xc->rvat_vc_maxhandle) /* TALOS-2023-1789 */
-                {
-                    chk_report_abort("TALOS-2023-1789");
-                }
-
-                for (i = 0; i < loopcnt; i++) {
-                    xc->rvat_chain_table[idx++] = 0;
-                }
-            }
-
-            pnt += skiplen;
-        } while (pnt != (chain_cmem + chain_clen));
-    } else {
-        do {
-            int skiplen;
-            uint64_t val = fstGetVarint32(pnt, &skiplen);
-
-            if (!val) {
-                pnt += skiplen;
-                val = fstGetVarint32(pnt, &skiplen);
-                xc->rvat_chain_table[idx] = 0;
-                xc->rvat_chain_table_lengths[idx] = -val;
-                idx++;
-            } else if (val & 1) {
-                pval = xc->rvat_chain_table[idx] = pval + (val >> 1);
-                if (idx) {
-                    xc->rvat_chain_table_lengths[pidx] = pval - xc->rvat_chain_table[pidx];
-                }
-                pidx = idx++;
-            } else {
-                fstHandle loopcnt = val >> 1;
-                if ((idx + loopcnt - 1) > xc->rvat_vc_maxhandle) /* TALOS-2023-1789 */
-                {
-                    chk_report_abort("TALOS-2023-1789");
-                }
-
-                for (i = 0; i < loopcnt; i++) {
-                    xc->rvat_chain_table[idx++] = 0;
-                }
-            }
-
-            pnt += skiplen;
-        } while (pnt != (chain_cmem + chain_clen));
+    if (!fstReaderParseChainTable(chain_cmem,
+                                  chain_clen,
+                                  sectype == FST_BL_VCDATA_DYN_ALIAS2,
+                                  xc->rvat_vc_maxhandle,
+                                  indx_pos - xc->rvat_vc_start,
+                                  xc->rvat_chain_table,
+                                  xc->rvat_chain_table_lengths,
+                                  &idx)) {
+        free(chain_cmem);
+        fstReaderDeallocateRvatData(xc);
+        return (NULL);
     }
 
     free(chain_cmem);
-    xc->rvat_chain_table[idx] = indx_pos - xc->rvat_vc_start;
-    xc->rvat_chain_table_lengths[pidx] = xc->rvat_chain_table[idx] - xc->rvat_chain_table[pidx];
-
-    for (i = 0; i < idx; i++) {
-        int32_t v32 = xc->rvat_chain_table_lengths[i];
-        if ((v32 < 0) && (!xc->rvat_chain_table[i])) {
-            v32 = -v32;
-            v32--;
-            if (((uint32_t)v32) < i) /* sanity check */
-            {
-                xc->rvat_chain_table[i] = xc->rvat_chain_table[v32];
-                xc->rvat_chain_table_lengths[i] = xc->rvat_chain_table_lengths[v32];
-            }
-        }
-    }
-
-#ifdef FST_DEBUG
-    fprintf(stderr, FST_APIMESS "decompressed chain idx len: %" PRIu32 "\n", idx);
-#endif
 
     xc->rvat_data_valid = 1;
 
@@ -6393,8 +6378,22 @@ process_value:
             /* data to process is for(j=0;j<destlen;j++) in mu[j] */
             xc->rvat_chain_mem = mu;
         } else {
-            int destlen = xc->rvat_chain_table_lengths[facidx] - skiplen;
-            unsigned char *mu = (unsigned char *)malloc(xc->rvat_chain_len = destlen);
+            uint32_t destlen;
+            unsigned char *mu;
+
+            if (xc->rvat_chain_table_lengths[facidx] <= skiplen) {
+                fstReaderDeallocateRvatData(xc);
+                return (NULL);
+            }
+
+            destlen = xc->rvat_chain_table_lengths[facidx] - skiplen;
+            xc->rvat_chain_len = destlen;
+
+            mu = (unsigned char *)malloc(destlen);
+            if (!mu) {
+                fstReaderDeallocateRvatData(xc);
+                return (NULL);
+            }
             fstFread(mu, destlen, 1, xc->f);
             /* data to process is for(j=0;j<destlen;j++) in mu[j] */
             xc->rvat_chain_mem = mu;
