@@ -2,6 +2,7 @@ libfst_tests = [
     'chain_table_across_sections',
     'empty_file',
     'mask_no_variables',
+    'packed_extent_wraps',
     'write_and_read',
 ]
 
@@ -24,11 +25,15 @@ malformed_cases = [
     'chain_table_pair_unterminated',
     'chain_table_unterminated',
     'chain_uncompresses_past_traversal',
+    'chain_varint_pair_past_traversal',
     'rvat_chain_table_overrun',
+    'time_chain_empty',
+    'time_chain_short',
     'traversal_buffer_smaller_than_chain',
     'traversal_buffer_smaller_than_chain_fastlz',
     'uncompressed_chain_past_traversal',
     'uncompressed_chain_shorter_than_its_varint',
+    'value_change_past_traversal',
 ]
 
 malformed = executable(

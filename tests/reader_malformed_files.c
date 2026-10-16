@@ -42,9 +42,22 @@
  *       section said reading it needs, so the decompressor wrote past the
  *       buffer -- the start of the write was checked, the length was not
  *
+ *   chain_varint_pair_past_traversal.fst
+ *       a value change chain for a variable length signal made of nothing but
+ *       continuation bytes, including the last byte, so its varint is
+ *       unterminated
+ *
  *   rvat_chain_table_overrun.fst
  *       the same overrun as chain_table_overrun.fst reached through
  *       fstReaderGetValueFromHandleAtTime() rather than fstReaderIterBlocks2().
+ *
+ *   time_chain_empty.fst
+ *       a value change section whose time chain says it holds no times at
+ *       all, while the section still has value changes to place on it
+ *
+ *   time_chain_short.fst
+ *       a value change section whose time chain holds three times while the
+ *       section says it holds 4000
  *
  *   traversal_buffer_smaller_than_chain.fst
  *   traversal_buffer_smaller_than_chain_fastlz.fst
@@ -65,6 +78,10 @@
  *       an uncompressed value change chain that the chain table gives four
  *       bytes and whose leading length varint is spelled in five, so the data
  *       after that varint is minus one byte long
+ *
+ *   value_change_past_traversal.fst
+ *       a handle's value change data starts past the end of the memory the
+ *       section says reading it needs
  */
 
 #include <fstapi.h>
