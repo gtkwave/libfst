@@ -47,6 +47,26 @@
  *       continuation bytes, including the last byte, so its varint is
  *       unterminated
  *
+ *   hierarchy_lz4duo_shorter_than_its_varint.fst
+ *       a doubly LZ4 packed hierarchy section whose data is the single byte
+ *       0x81, a continuation byte, so the varint in front of its data does not
+ *       end inside the section
+ *
+ *   geometry_short.fst
+ *       a geometry section that announces three handles but holds the width
+ *       of only one
+ *
+ *   geometry_varint_unterminated.fst
+ *       a geometry section whose last byte is a varint continuation byte
+ *
+ *   frame_maxhandle_too_big.fst
+ *       a section's frame says it holds values for two handles, while the file
+ *       has one
+ *
+ *   frame_real_narrower_than_eight.fst
+ *       a real declared two bytes wide, so its value in the frame is two bytes
+ *       long
+ *
  *   rvat_chain_table_overrun.fst
  *       the same overrun as chain_table_overrun.fst reached through
  *       fstReaderGetValueFromHandleAtTime() rather than fstReaderIterBlocks2().
