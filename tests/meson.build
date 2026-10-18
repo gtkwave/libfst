@@ -4,6 +4,7 @@ libfst_tests = [
     'empty_file',
     'mask_no_variables',
     'packed_extent_wraps',
+    'rvat_section_boundary',
     'write_and_read',
 ]
 
