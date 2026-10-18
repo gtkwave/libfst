@@ -5531,27 +5531,34 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
                     uint32_t val;
                     uint32_t skiplen;
                     uint32_t tdelta;
+                    unsigned long sourcelen;
 
                     fstReaderFseeko(xc, xc->f, vc_start + chain_table[i], SEEK_SET);
                     val = fstReaderVarint32WithSkip(xc->f, &skiplen);
+
+                    if (chain_table_lengths[i] <= skiplen) {
+                        goto block_err;
+                    }
+
+                    sourcelen = chain_table_lengths[i] - skiplen;
+
                     if (val) {
                         unsigned char *mu =
                             mem_for_traversal + traversal_mem_offs; /* uncomp: dst */
                         unsigned char *mc; /* comp:   src */
                         unsigned long destlen = val;
-                        unsigned long sourcelen = chain_table_lengths[i];
 
                         if (((uint64_t)traversal_mem_offs + destlen) > mem_required_for_traversal) {
                             goto block_err;
                         }
 
-                        if (mc_mem_len < chain_table_lengths[i]) {
+                        if (mc_mem_len < sourcelen) {
                             free(mc_mem);
-                            mc_mem = (unsigned char *)malloc(mc_mem_len = chain_table_lengths[i]);
+                            mc_mem = (unsigned char *)malloc(mc_mem_len = sourcelen);
                         }
                         mc = mc_mem;
 
-                        fstFread(mc, chain_table_lengths[i], 1, xc->f);
+                        fstFread(mc, sourcelen, 1, xc->f);
 
                         switch (packtype) {
                             case '4':
@@ -5580,14 +5587,8 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
                         length_remaining[i] = val;
                         traversal_mem_offs += val;
                     } else {
-                        uint32_t destlen;
+                        uint32_t destlen = sourcelen;
                         unsigned char *mu = mem_for_traversal + traversal_mem_offs;
-
-                        if (chain_table_lengths[i] <= skiplen) {
-                            goto block_err;
-                        }
-
-                        destlen = chain_table_lengths[i] - skiplen;
 
                         if (((uint64_t)traversal_mem_offs + destlen) > mem_required_for_traversal) {
                             goto block_err;
@@ -6413,17 +6414,25 @@ process_value:
 
     if (!xc->rvat_chain_mem) {
         uint32_t skiplen;
+        unsigned long sourcelen;
         fstReaderFseeko(xc, xc->f, xc->rvat_vc_start + xc->rvat_chain_table[facidx], SEEK_SET);
         xc->rvat_chain_len = fstReaderVarint32WithSkip(xc->f, &skiplen);
+
+        if (xc->rvat_chain_table_lengths[facidx] <= skiplen) {
+            fstReaderDeallocateRvatData(xc);
+            return (NULL);
+        }
+
+        sourcelen = xc->rvat_chain_table_lengths[facidx] - skiplen;
+
         if (xc->rvat_chain_len) {
             /* extra null byte to catch any unterminated varint */
             unsigned char *mu = (unsigned char *)calloc(1, (uint64_t)xc->rvat_chain_len + 1);
-            unsigned char *mc = (unsigned char *)malloc(xc->rvat_chain_table_lengths[facidx]);
+            unsigned char *mc = (unsigned char *)malloc(sourcelen);
             unsigned long destlen = xc->rvat_chain_len;
-            unsigned long sourcelen = xc->rvat_chain_table_lengths[facidx];
             int rc = Z_OK;
 
-            fstFread(mc, xc->rvat_chain_table_lengths[facidx], 1, xc->f);
+            fstFread(mc, sourcelen, 1, xc->f);
 
             switch (xc->rvat_packtype) {
                 case '4':
@@ -6457,19 +6466,10 @@ process_value:
             /* data to process is for(j=0;j<destlen;j++) in mu[j] */
             xc->rvat_chain_mem = mu;
         } else {
-            uint32_t destlen;
-            unsigned char *mu;
-
-            if (xc->rvat_chain_table_lengths[facidx] <= skiplen) {
-                fstReaderDeallocateRvatData(xc);
-                return (NULL);
-            }
-
-            destlen = xc->rvat_chain_table_lengths[facidx] - skiplen;
-            xc->rvat_chain_len = destlen;
-
+            uint32_t destlen = sourcelen;
             /* extra null byte to catch any unterminated varint */
-            mu = (unsigned char *)calloc(1, (uint64_t)destlen + 1);
+            unsigned char *mu = (unsigned char *)calloc(1, (uint64_t)destlen + 1);
+
             if (!mu) {
                 fstReaderDeallocateRvatData(xc);
                 return (NULL);
@@ -6477,6 +6477,7 @@ process_value:
             fstFread(mu, destlen, 1, xc->f);
             /* data to process is for(j=0;j<destlen;j++) in mu[j] */
             xc->rvat_chain_mem = mu;
+            xc->rvat_chain_len = destlen;
         }
 
         xc->rvat_chain_facidx = facidx;
