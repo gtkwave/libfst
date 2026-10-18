@@ -27,6 +27,8 @@ malformed_cases = [
     'chain_table_unterminated',
     'chain_uncompresses_past_traversal',
     'chain_varint_pair_past_traversal',
+    'frame_maxhandle_too_big',
+    'frame_real_narrower_than_eight',
     'rvat_chain_table_overrun',
     'time_chain_empty',
     'time_chain_short',
