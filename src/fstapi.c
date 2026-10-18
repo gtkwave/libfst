@@ -3223,7 +3223,9 @@ static const char *enumvaluetypes[] = {"integer",
                                        "unsigned_int",
                                        "unsigned_shortint",
                                        "unsigned_longint",
-                                       "unsigned_byte"};
+                                       "unsigned_byte",
+                                       "reg",
+                                       "time"};
 
 static const char *packtypes[] = {"none", "unpacked", "packed", "tagged_packed"};
 
@@ -3288,6 +3290,7 @@ struct fstReaderContext
     uint64_t rvat_beg_tim, rvat_end_tim;
     unsigned char *rvat_frame_data;
     uint64_t rvat_frame_maxhandle;
+    uint64_t rvat_frame_uclen; /* bytes in rvat_frame_data */
     fst_off_t *rvat_chain_table;
     uint32_t *rvat_chain_table_lengths;
     uint64_t rvat_vc_maxhandle;
@@ -4608,7 +4611,8 @@ int fstReaderInit(struct fstReaderContext *xc)
                 if (!hdr_incomplete) {
                     uint64_t clen = seclen - 24;
                     uint64_t uclen = fstReaderUint64(xc->f);
-                    unsigned char *ucdata = (unsigned char *)malloc(uclen);
+                    /* extra null byte to catch any unterminated varint */
+                    unsigned char *ucdata = (unsigned char *)calloc(1, uclen + 1);
                     unsigned char *pnt = ucdata;
                     unsigned int i;
 
@@ -4650,7 +4654,14 @@ int fstReaderInit(struct fstReaderContext *xc)
 
                     for (i = 0; i < xc->maxhandle; i++) {
                         int skiplen;
-                        uint64_t val = fstGetVarint32(pnt, &skiplen);
+                        uint64_t val;
+
+                        if (pnt >= (ucdata + uclen)) {
+                            hdr_seen = 0;
+                            break;
+                        }
+
+                        val = fstGetVarint32(pnt, &skiplen);
 
                         pnt += skiplen;
 
@@ -4777,6 +4788,7 @@ static void fstReaderDeallocateRvatData(fstReaderContext *xc)
         xc->rvat_chain_mem = NULL;
         free(xc->rvat_frame_data);
         xc->rvat_frame_data = NULL;
+        xc->rvat_frame_uclen = 0;
         free(xc->rvat_time_table);
         xc->rvat_time_table = NULL;
         xc->rvat_time_table_items = 0;
@@ -5028,7 +5040,7 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
     fst_off_t indx_pntr, indx_pos;
     fst_off_t *chain_table = NULL;
     uint32_t *chain_table_lengths = NULL;
-    unsigned char *chain_cmem;
+    unsigned char *chain_cmem = NULL;
     long chain_clen;
     fstHandle idx, i;
     uint64_t vc_maxhandle_largest = 0;
@@ -5296,9 +5308,21 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
                     free(mc);
                 }
 
+                if (frame_maxhandle > xc->maxhandle) {
+                    /* frame names more handles than the header announces */
+                    free(mu);
+                    goto block_err;
+                }
+
                 for (idx = 0; idx < frame_maxhandle; idx++) {
                     int process_idx = idx / 8;
                     int process_bit = idx & 7;
+                    int is_real = xc->signal_typs[idx] == FST_VT_VCD_REAL;
+
+                    if (((uint64_t)sig_offs + (is_real ? 8 : xc->signal_lens[idx])) > frame_uclen) {
+                        free(mu);
+                        goto block_err;
+                    }
 
                     if (xc->process_mask[process_idx] & (1 << process_bit)) {
                         if (xc->signal_lens[idx] <= 1) {
@@ -5325,7 +5349,7 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
                                 /* variable-length ("0" length) records have no initial state */
                             }
                         } else {
-                            if (xc->signal_typs[idx] != FST_VT_VCD_REAL) {
+                            if (!is_real) {
                                 if (value_change_callback) {
                                     if (xc->signal_lens[idx] > xc->longest_signal_value_len) {
                                         chk_report_abort("TALOS-2023-1797");
@@ -5346,9 +5370,6 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
                                         vcd_id[0] =
                                             (xc->signal_typs[idx] != FST_VT_VCD_PORT) ? 'b' : 'p';
                                         fstWritex(xc, vcd_id, 1);
-                                        if ((sig_offs + xc->signal_lens[idx]) > frame_uclen) {
-                                            chk_report_abort("TALOS-2023-1793");
-                                        }
                                         fstWritex(xc, mu + sig_offs, xc->signal_lens[idx]);
 
                                         vcd_id[0] = ' '; /* collapse 3 writes into one I/O call */
@@ -5532,27 +5553,34 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
                     uint32_t val;
                     uint32_t skiplen;
                     uint32_t tdelta;
+                    unsigned long sourcelen;
 
                     fstReaderFseeko(xc, xc->f, vc_start + chain_table[i], SEEK_SET);
                     val = fstReaderVarint32WithSkip(xc->f, &skiplen);
+
+                    if (chain_table_lengths[i] <= skiplen) {
+                        goto block_err;
+                    }
+
+                    sourcelen = chain_table_lengths[i] - skiplen;
+
                     if (val) {
                         unsigned char *mu =
                             mem_for_traversal + traversal_mem_offs; /* uncomp: dst */
                         unsigned char *mc; /* comp:   src */
                         unsigned long destlen = val;
-                        unsigned long sourcelen = chain_table_lengths[i];
 
                         if (((uint64_t)traversal_mem_offs + destlen) > mem_required_for_traversal) {
                             goto block_err;
                         }
 
-                        if (mc_mem_len < chain_table_lengths[i]) {
+                        if (mc_mem_len < sourcelen) {
                             free(mc_mem);
-                            mc_mem = (unsigned char *)malloc(mc_mem_len = chain_table_lengths[i]);
+                            mc_mem = (unsigned char *)malloc(mc_mem_len = sourcelen);
                         }
                         mc = mc_mem;
 
-                        fstFread(mc, chain_table_lengths[i], 1, xc->f);
+                        fstFread(mc, sourcelen, 1, xc->f);
 
                         switch (packtype) {
                             case '4':
@@ -5581,14 +5609,8 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
                         length_remaining[i] = val;
                         traversal_mem_offs += val;
                     } else {
-                        uint32_t destlen;
+                        uint32_t destlen = sourcelen;
                         unsigned char *mu = mem_for_traversal + traversal_mem_offs;
-
-                        if (chain_table_lengths[i] <= skiplen) {
-                            goto block_err;
-                        }
-
-                        destlen = chain_table_lengths[i] - skiplen;
 
                         if (((uint64_t)traversal_mem_offs + destlen) > mem_required_for_traversal) {
                             goto block_err;
@@ -6017,6 +6039,7 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
     block_err:
         free(tc_head);
         free(chain_cmem);
+        chain_cmem = NULL;
         free(mc_mem);
         mc_mem = NULL;
         mc_mem_len = 0;
@@ -6057,7 +6080,15 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
 
 static char *fstExtractRvatDataFromFrame(fstReaderContext *xc, fstHandle facidx, char *buf)
 {
+    uint32_t len;
+
     if (facidx >= xc->rvat_frame_maxhandle) {
+        return (NULL);
+    }
+
+    len = (xc->signal_typs[facidx] != FST_VT_VCD_REAL) ? xc->signal_lens[facidx] : 8;
+
+    if (((uint64_t)xc->rvat_sig_offs[facidx] + len) > xc->rvat_frame_uclen) {
         return (NULL);
     }
 
@@ -6283,6 +6314,7 @@ char *fstReaderGetValueFromHandleAtTime(fstReaderContext *xc,
     frame_clen = fstReaderVarint64(xc->f);
     xc->rvat_frame_maxhandle = fstReaderVarint64(xc->f);
     xc->rvat_frame_data = (unsigned char *)malloc(frame_uclen);
+    xc->rvat_frame_uclen = frame_uclen;
 
     if (frame_uclen == frame_clen) {
         fstFread(xc->rvat_frame_data, frame_uclen, 1, xc->f);
@@ -6414,17 +6446,25 @@ process_value:
 
     if (!xc->rvat_chain_mem) {
         uint32_t skiplen;
+        unsigned long sourcelen;
         fstReaderFseeko(xc, xc->f, xc->rvat_vc_start + xc->rvat_chain_table[facidx], SEEK_SET);
         xc->rvat_chain_len = fstReaderVarint32WithSkip(xc->f, &skiplen);
+
+        if (xc->rvat_chain_table_lengths[facidx] <= skiplen) {
+            fstReaderDeallocateRvatData(xc);
+            return (NULL);
+        }
+
+        sourcelen = xc->rvat_chain_table_lengths[facidx] - skiplen;
+
         if (xc->rvat_chain_len) {
             /* extra null byte to catch any unterminated varint */
             unsigned char *mu = (unsigned char *)calloc(1, (uint64_t)xc->rvat_chain_len + 1);
-            unsigned char *mc = (unsigned char *)malloc(xc->rvat_chain_table_lengths[facidx]);
+            unsigned char *mc = (unsigned char *)malloc(sourcelen);
             unsigned long destlen = xc->rvat_chain_len;
-            unsigned long sourcelen = xc->rvat_chain_table_lengths[facidx];
             int rc = Z_OK;
 
-            fstFread(mc, xc->rvat_chain_table_lengths[facidx], 1, xc->f);
+            fstFread(mc, sourcelen, 1, xc->f);
 
             switch (xc->rvat_packtype) {
                 case '4':
@@ -6458,19 +6498,10 @@ process_value:
             /* data to process is for(j=0;j<destlen;j++) in mu[j] */
             xc->rvat_chain_mem = mu;
         } else {
-            uint32_t destlen;
-            unsigned char *mu;
-
-            if (xc->rvat_chain_table_lengths[facidx] <= skiplen) {
-                fstReaderDeallocateRvatData(xc);
-                return (NULL);
-            }
-
-            destlen = xc->rvat_chain_table_lengths[facidx] - skiplen;
-            xc->rvat_chain_len = destlen;
-
+            uint32_t destlen = sourcelen;
             /* extra null byte to catch any unterminated varint */
-            mu = (unsigned char *)calloc(1, (uint64_t)destlen + 1);
+            unsigned char *mu = (unsigned char *)calloc(1, (uint64_t)destlen + 1);
+
             if (!mu) {
                 fstReaderDeallocateRvatData(xc);
                 return (NULL);
@@ -6478,6 +6509,7 @@ process_value:
             fstFread(mu, destlen, 1, xc->f);
             /* data to process is for(j=0;j<destlen;j++) in mu[j] */
             xc->rvat_chain_mem = mu;
+            xc->rvat_chain_len = destlen;
         }
 
         xc->rvat_chain_facidx = facidx;
