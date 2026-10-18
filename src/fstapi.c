@@ -214,7 +214,7 @@ static FILE *tmpfile_open(char **nam)
 
         if (fname) {
             *nam = fname;
-            fh = unlink_fopen(fname, "w+b");
+            fh = fopen(fname, "w+b");
         }
     }
 
