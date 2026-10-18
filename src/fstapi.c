@@ -4608,7 +4608,8 @@ int fstReaderInit(struct fstReaderContext *xc)
                 if (!hdr_incomplete) {
                     uint64_t clen = seclen - 24;
                     uint64_t uclen = fstReaderUint64(xc->f);
-                    unsigned char *ucdata = (unsigned char *)malloc(uclen);
+                    /* extra null byte to catch any unterminated varint */
+                    unsigned char *ucdata = (unsigned char *)calloc(1, uclen + 1);
                     unsigned char *pnt = ucdata;
                     unsigned int i;
 
@@ -4650,7 +4651,14 @@ int fstReaderInit(struct fstReaderContext *xc)
 
                     for (i = 0; i < xc->maxhandle; i++) {
                         int skiplen;
-                        uint64_t val = fstGetVarint32(pnt, &skiplen);
+                        uint64_t val;
+
+                        if (pnt >= (ucdata + uclen)) {
+                            hdr_seen = 0;
+                            break;
+                        }
+
+                        val = fstGetVarint32(pnt, &skiplen);
 
                         pnt += skiplen;
 
