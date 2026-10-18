@@ -1,8 +1,10 @@
 libfst_tests = [
+    'attr_enum_value_type',
     'chain_table_across_sections',
     'empty_file',
     'mask_no_variables',
     'packed_extent_wraps',
+    'rvat_section_boundary',
     'write_and_read',
 ]
 
@@ -27,11 +29,17 @@ malformed_cases = [
     'chain_table_unterminated',
     'chain_uncompresses_past_traversal',
     'chain_varint_pair_past_traversal',
+    'hierarchy_lz4duo_shorter_than_its_varint',
+    'geometry_short',
+    'geometry_varint_unterminated',
+    'frame_maxhandle_too_big',
+    'frame_real_narrower_than_eight',
     'rvat_chain_table_overrun',
     'time_chain_empty',
     'time_chain_short',
     'traversal_buffer_smaller_than_chain',
     'traversal_buffer_smaller_than_chain_fastlz',
+    'traversal_size_wraps',
     'uncompressed_chain_past_traversal',
     'uncompressed_chain_shorter_than_its_varint',
     'value_change_past_traversal',
