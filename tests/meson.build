@@ -1,4 +1,5 @@
 libfst_tests = [
+    'attr_enum_value_type',
     'chain_table_across_sections',
     'empty_file',
     'mask_no_variables',
