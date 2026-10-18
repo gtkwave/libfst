@@ -3223,7 +3223,9 @@ static const char *enumvaluetypes[] = {"integer",
                                        "unsigned_int",
                                        "unsigned_shortint",
                                        "unsigned_longint",
-                                       "unsigned_byte"};
+                                       "unsigned_byte",
+                                       "reg",
+                                       "time"};
 
 static const char *packtypes[] = {"none", "unpacked", "packed", "tagged_packed"};
 
