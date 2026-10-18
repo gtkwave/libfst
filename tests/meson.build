@@ -25,6 +25,7 @@ malformed_cases = [
     'chain_shorter_than_its_length',
     'chain_table_overrun',
     'chain_table_pair_unterminated',
+    'chain_table_svarint_overlong',
     'chain_table_unterminated',
     'chain_uncompresses_past_traversal',
     'chain_varint_pair_past_traversal',

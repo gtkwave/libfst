@@ -617,26 +617,27 @@ static int fstWriterVarint(FILE *handle, uint64_t v)
 static int64_t fstGetSVarint64(unsigned char *mem, int *skiplen)
 {
     unsigned char *mem_orig = mem;
-    int64_t rc = 0;
-    const int64_t one = 1;
+    uint64_t rc = 0;
     const int siz = sizeof(int64_t) * 8;
     int shift = 0;
     unsigned char byt;
 
     do {
         byt = *(mem++);
-        rc |= ((int64_t)(byt & 0x7f)) << shift;
+        if (shift < siz) {
+            rc |= ((uint64_t)(byt & 0x7f)) << shift;
+        }
         shift += 7;
 
     } while (byt & 0x80);
 
     if ((shift < siz) && (byt & 0x40)) {
-        rc |= -(one << shift); /* sign extend */
+        rc |= ~(uint64_t)0 << shift; /* sign extend */
     }
 
     *skiplen = mem - mem_orig;
 
-    return (rc);
+    return ((int64_t)rc);
 }
 
 #ifndef FST_DYNAMIC_ALIAS2_DISABLE
