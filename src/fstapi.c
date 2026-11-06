@@ -770,6 +770,7 @@ struct fstWriterContext
     uint32_t path_array_count;
 
     unsigned fseek_failed : 1;
+    int write_error; /* errno of the first write that failed, 0 if none has */
 
     char *geom_handle_nam;
     char *valpos_handle_nam;
@@ -792,6 +793,57 @@ static int fstWriterFseeko(struct fstWriterContext *xc, FILE *stream, fst_off_t 
     }
 
     return (rc);
+}
+
+/*
+ * keeps the first write failure of the file and its working files, so a
+ * caller can tell the file it asked for is incomplete
+ */
+static void fstWriterNoteWriteError(struct fstWriterContext *xc, int err)
+{
+    if (!xc->write_error) {
+        xc->write_error = err ? err : EIO;
+    }
+}
+
+/*
+ * stdio leaves a stream's error indicator set once any write to it failed, so
+ * checking it at each flush also catches a failed write since the last one
+ */
+static int fstWriterFflush(struct fstWriterContext *xc, FILE *stream)
+{
+    int rc = fflush(stream);
+
+    if (rc != 0) {
+        fstWriterNoteWriteError(xc, errno);
+    } else if (ferror(stream)) {
+        fstWriterNoteWriteError(xc, EIO);
+    }
+
+    return (rc);
+}
+
+/*
+ * a close writes what the stream still holds, so it can fail as a write does
+ */
+static void fstWriterFclose(struct fstWriterContext *xc, FILE *stream)
+{
+    int had_error = ferror(stream);
+
+    if (fclose(stream) != 0) {
+        fstWriterNoteWriteError(xc, errno);
+    } else if (had_error) {
+        fstWriterNoteWriteError(xc, EIO);
+    }
+}
+
+static void fstWriterGzclose(struct fstWriterContext *xc, gzFile zhandle)
+{
+    int rc = gzclose(zhandle);
+
+    if (rc != Z_OK) {
+        fstWriterNoteWriteError(xc, (rc == Z_ERRNO) ? errno : EIO);
+    }
 }
 
 static uint32_t fstWriterUint32WithVarint32(struct fstWriterContext *xc,
@@ -918,7 +970,7 @@ static void fstWriterEmitHdrBytes(struct fstWriterContext *xc)
 
 #define FST_HDR_LENGTH (FST_HDR_OFFS_TIMEZERO + FST_HDR_TIMEZERO_SIZE)
     /* +330 next section starts here */
-    fflush(xc->handle);
+    fstWriterFflush(xc, xc->handle);
 }
 
 /*
@@ -960,7 +1012,7 @@ static void fstWriterCreateMmaps(struct fstWriterContext *xc)
 {
     fst_off_t curpos = ftello(xc->handle);
 
-    fflush(xc->hier_handle);
+    fstWriterFflush(xc, xc->hier_handle);
 
     /* write out intermediate header */
     fstWriterFseeko(xc, xc->handle, FST_HDR_OFFS_START_TIME, SEEK_SET);
@@ -972,11 +1024,11 @@ static void fstWriterCreateMmaps(struct fstWriterContext *xc)
     fstWriterUint64(xc->handle, xc->maxhandle);
     fstWriterUint64(xc->handle, xc->secnum);
     fstWriterFseeko(xc, xc->handle, curpos, SEEK_SET);
-    fflush(xc->handle);
+    fstWriterFflush(xc, xc->handle);
 
     /* do mappings */
     if (!xc->valpos_mem) {
-        fflush(xc->valpos_handle);
+        fstWriterFflush(xc, xc->valpos_handle);
         errno = 0;
         if (xc->maxhandle) {
             fstWriterMmapSanity(xc->valpos_mem =
@@ -992,7 +1044,7 @@ static void fstWriterCreateMmaps(struct fstWriterContext *xc)
         }
     }
     if (!xc->curval_mem) {
-        fflush(xc->curval_handle);
+        fstWriterFflush(xc, xc->curval_handle);
         errno = 0;
         if (xc->maxvalpos) {
             fstWriterMmapSanity(xc->curval_mem = (unsigned char *)fstMmap(NULL,
@@ -1649,7 +1701,7 @@ static void fstWriterFlushContextPrivate(fstWriterContext *xc)
                     endpos - indxpos); /* write delta index position at very end of block */
 
     /*emit time changes for block */
-    fflush(xc->tchn_handle);
+    fstWriterFflush(xc, xc->tchn_handle);
     tlen = ftello(xc->tchn_handle);
     fstWriterFseeko(xc, xc->tchn_handle, 0, SEEK_SET);
 
@@ -1691,7 +1743,7 @@ static void fstWriterFlushContextPrivate(fstWriterContext *xc)
     fstWriterUint64(xc->handle, xc->curtime); /* write end time for section */
     fstWriterUint64(xc->handle,
                     unc_memreq); /* amount of buffer memory required in reader for full traversal */
-    fflush(xc->handle);
+    fstWriterFflush(xc, xc->handle);
 
     fstWriterFseeko(xc,
                     xc->handle,
@@ -1708,7 +1760,7 @@ static void fstWriterFlushContextPrivate(fstWriterContext *xc)
     fputc(FST_BL_VCDATA, xc->handle);
 #endif
 
-    fflush(xc->handle);
+    fstWriterFflush(xc, xc->handle);
 
     fstWriterFseeko(xc, xc->handle, endpos, SEEK_SET); /* seek to end of file */
 
@@ -1727,7 +1779,7 @@ static void fstWriterFlushContextPrivate(fstWriterContext *xc)
     if (!xc2->skip_writing_section_hdr) {
         fstWriterEmitSectionHeader(xc); /* emit next section header */
     }
-    fflush(xc->handle);
+    fstWriterFflush(xc, xc->handle);
 
     xc->already_in_flush = 0;
 }
@@ -1748,6 +1800,9 @@ static void *fstWriterFlushContextPrivate1(void *ctx)
     free(xc->vchg_mem);
     tmpfile_close(&xc->tchn_handle, &xc->tchn_handle_nam);
     xc_parent = xc->xc_parent;
+    if (xc->write_error) { /* this copy is freed here, its parent read later */
+        fstWriterNoteWriteError(xc_parent, xc->write_error);
+    }
     free(xc);
 
     xc_parent->in_pthread = 0;
@@ -1841,10 +1896,13 @@ void fstWriterFlushContext(fstWriterContext *xc)
 }
 
 /*
- * close out FST file
+ * close out FST file, answering the errno of the first write that failed, the
+ * file's own close included, or 0 if none did
  */
-void fstWriterClose(fstWriterContext *xc)
+int fstWriterClose(fstWriterContext *xc)
 {
+    int write_error = 0;
+
 #ifdef FST_WRITER_PARALLEL
     if (xc) {
         pthread_mutex_lock(&xc->mutex);
@@ -1900,7 +1958,7 @@ void fstWriterClose(fstWriterContext *xc)
         }
 
         /* write out geom section */
-        fflush(xc->geom_handle);
+        fstWriterFflush(xc, xc->geom_handle);
         tlen = ftello(xc->geom_handle);
         errno = 0;
         if (tlen) {
@@ -1931,7 +1989,7 @@ void fstWriterClose(fstWriterContext *xc)
             /* compressed len is section length - 24 */
             fstWriterUint64(xc->handle, xc->maxhandle); /* maxhandle */
             fstFwrite((((fst_off_t)destlen) != tlen) ? dmem : tmem, destlen, 1, xc->handle);
-            fflush(xc->handle);
+            fstWriterFflush(xc, xc->handle);
 
             fstWriterFseeko(xc, xc->handle, fixup_offs, SEEK_SET);
             fputc(FST_BL_GEOM, xc->handle); /* actual tag */
@@ -1940,7 +1998,7 @@ void fstWriterClose(fstWriterContext *xc)
                             xc->handle,
                             0,
                             SEEK_END); /* move file pointer to end for any section adds */
-            fflush(xc->handle);
+            fstWriterFflush(xc, xc->handle);
 
             free(dmem);
             fstMunmap(tmem, tlen);
@@ -1969,7 +2027,7 @@ void fstWriterClose(fstWriterContext *xc)
             eos = ftello(xc->handle);
             fstWriterFseeko(xc, xc->handle, bpos, SEEK_SET);
             fstWriterUint64(xc->handle, eos - bpos);
-            fflush(xc->handle);
+            fstWriterFflush(xc, xc->handle);
 
             fstWriterFseeko(xc, xc->handle, fixup_offs, SEEK_SET);
             fputc(FST_BL_BLACKOUT, xc->handle); /* actual tag */
@@ -1978,7 +2036,7 @@ void fstWriterClose(fstWriterContext *xc)
                             xc->handle,
                             0,
                             SEEK_END); /* move file pointer to end for any section adds */
-            fflush(xc->handle);
+            fstWriterFflush(xc, xc->handle);
         }
 
         if (xc->compress_hier) {
@@ -2000,7 +2058,7 @@ void fstWriterClose(fstWriterContext *xc)
             if (!xc->fourpack) {
                 unsigned char *mem = (unsigned char *)malloc(FST_GZIO_LEN);
                 zfd = dup(fileno(xc->handle));
-                fflush(xc->handle);
+                fstWriterFflush(xc, xc->handle);
                 zhandle = gzdopen(zfd, "wb4");
                 if (zhandle) {
                     fstWriterFseeko(xc, xc->hier_handle, 0, SEEK_SET);
@@ -2009,11 +2067,14 @@ void fstWriterClose(fstWriterContext *xc)
                                            ? FST_GZIO_LEN
                                            : (xc->hier_file_len - hl);
                         fstFread(mem, len, 1, xc->hier_handle);
-                        gzwrite(zhandle, mem, len);
+                        if (gzwrite(zhandle, mem, len) == 0) {
+                            fstWriterNoteWriteError(xc, EIO);
+                        }
                     }
-                    gzclose(zhandle);
+                    fstWriterGzclose(xc, zhandle);
                 } else {
                     close(zfd);
+                    fstWriterNoteWriteError(xc, EIO);
                 }
                 free(mem);
             } else {
@@ -2022,7 +2083,7 @@ void fstWriterClose(fstWriterContext *xc)
                 unsigned char *hmem = NULL;
                 int packed_len;
 
-                fflush(xc->handle);
+                fstWriterFflush(xc, xc->handle);
 
                 lz4_maxlen = LZ4_compressBound(xc->hier_file_len);
                 mem = (unsigned char *)malloc(lz4_maxlen);
@@ -2074,7 +2135,7 @@ void fstWriterClose(fstWriterContext *xc)
             eos = ftello(xc->handle);
             fstWriterFseeko(xc, xc->handle, hlen, SEEK_SET);
             fstWriterUint64(xc->handle, eos - hlen);
-            fflush(xc->handle);
+            fstWriterFflush(xc, xc->handle);
 
             fstWriterFseeko(xc, xc->handle, fixup_offs, SEEK_SET);
             fputc(xc->fourpack ? (fourpack_duo ? FST_BL_HIER_LZ4DUO : FST_BL_HIER_LZ4)
@@ -2085,7 +2146,7 @@ void fstWriterClose(fstWriterContext *xc)
                             xc->handle,
                             0,
                             SEEK_END); /* move file pointer to end for any section adds */
-            fflush(xc->handle);
+            fstWriterFflush(xc, xc->handle);
 
 #ifndef __MINGW32__
             snprintf(fnam, fnam_len, "%s.hier", xc->filename);
@@ -2103,7 +2164,7 @@ void fstWriterClose(fstWriterContext *xc)
         fstWriterUint64(xc->handle, xc->numsigs);
         fstWriterUint64(xc->handle, xc->maxhandle);
         fstWriterUint64(xc->handle, xc->secnum);
-        fflush(xc->handle);
+        fstWriterFflush(xc, xc->handle);
 
         tmpfile_close(&xc->tchn_handle, &xc->tchn_handle_nam);
         free(xc->vchg_mem);
@@ -2112,7 +2173,7 @@ void fstWriterClose(fstWriterContext *xc)
         tmpfile_close(&xc->valpos_handle, &xc->valpos_handle_nam);
         tmpfile_close(&xc->geom_handle, &xc->geom_handle_nam);
         if (xc->hier_handle) {
-            fclose(xc->hier_handle);
+            fstWriterFclose(xc, xc->hier_handle);
             xc->hier_handle = NULL;
         }
         if (xc->handle) {
@@ -2137,7 +2198,7 @@ void fstWriterClose(fstWriterContext *xc)
                     fputc(FST_BL_ZWRAPPER, fp);
                     fstWriterUint64(fp, 0);
                     fstWriterUint64(fp, uclen);
-                    fflush(fp);
+                    fstWriterFflush(xc, fp);
 
                     fstWriterFseeko(xc, xc->handle, 0, SEEK_SET);
                     zfd = dup(fileno(fp));
@@ -2147,31 +2208,36 @@ void fstWriterClose(fstWriterContext *xc)
                             size_t this_len =
                                 ((uclen - offpnt) > FST_GZIO_LEN) ? FST_GZIO_LEN : (uclen - offpnt);
                             fstFread(gz_membuf, this_len, 1, xc->handle);
-                            gzwrite(dsth, gz_membuf, this_len);
+                            if (gzwrite(dsth, gz_membuf, this_len) == 0) {
+                                fstWriterNoteWriteError(xc, EIO);
+                            }
                         }
-                        gzclose(dsth);
+                        fstWriterGzclose(xc, dsth);
                     } else {
                         close(zfd);
+                        fstWriterNoteWriteError(xc, EIO);
                     }
                     fstWriterFseeko(xc, fp, 0, SEEK_END);
                     offpnt = ftello(fp);
                     fstWriterFseeko(xc, fp, 1, SEEK_SET);
                     fstWriterUint64(fp, offpnt - 1);
-                    fclose(fp);
-                    fclose(xc->handle);
+                    fstWriterFclose(xc, fp);
+                    fstWriterFclose(xc, xc->handle);
                     xc->handle = NULL;
 
                     unlink(xc->filename);
-                    rename(hf, xc->filename);
+                    if (rename(hf, xc->filename) != 0) {
+                        fstWriterNoteWriteError(xc, errno);
+                    }
                 } else {
                     xc->repack_on_close = 0;
-                    fclose(xc->handle);
+                    fstWriterFclose(xc, xc->handle);
                     xc->handle = NULL;
                 }
 
                 free(hf);
             } else {
-                fclose(xc->handle);
+                fstWriterFclose(xc, xc->handle);
                 xc->handle = NULL;
             }
         }
@@ -2203,8 +2269,11 @@ void fstWriterClose(fstWriterContext *xc)
 
         free(xc->filename);
         xc->filename = NULL;
+        write_error = xc->write_error;
         free(xc);
     }
+
+    return (write_error);
 }
 
 /*
@@ -2221,7 +2290,7 @@ void fstWriterSetDate(fstWriterContext *xc, const char *dat)
         memset(s, 0, FST_HDR_DATE_SIZE);
         memcpy(s, dat, (len < FST_HDR_DATE_SIZE) ? len : FST_HDR_DATE_SIZE);
         fstFwrite(s, FST_HDR_DATE_SIZE, 1, xc->handle);
-        fflush(xc->handle);
+        fstWriterFflush(xc, xc->handle);
         fstWriterFseeko(xc, xc->handle, fpos, SEEK_SET);
     }
 }
@@ -2237,7 +2306,7 @@ void fstWriterSetVersion(fstWriterContext *xc, const char *vers)
         memset(s, 0, FST_HDR_SIM_VERSION_SIZE);
         memcpy(s, vers, (len < FST_HDR_SIM_VERSION_SIZE) ? len : FST_HDR_SIM_VERSION_SIZE);
         fstFwrite(s, FST_HDR_SIM_VERSION_SIZE, 1, xc->handle);
-        fflush(xc->handle);
+        fstWriterFflush(xc, xc->handle);
         fstWriterFseeko(xc, xc->handle, fpos, SEEK_SET);
     }
 }
@@ -2252,7 +2321,7 @@ void fstWriterSetFileType(fstWriterContext *xc, enum fstFileType filetype)
 
             fstWriterFseeko(xc, xc->handle, FST_HDR_OFFS_FILETYPE, SEEK_SET);
             fputc(xc->filetype, xc->handle);
-            fflush(xc->handle);
+            fstWriterFflush(xc, xc->handle);
             fstWriterFseeko(xc, xc->handle, fpos, SEEK_SET);
         }
     }
@@ -2366,7 +2435,7 @@ void fstWriterSetTimescale(fstWriterContext *xc, int ts)
         fst_off_t fpos = ftello(xc->handle);
         fstWriterFseeko(xc, xc->handle, FST_HDR_OFFS_TIMESCALE, SEEK_SET);
         fputc(ts & 255, xc->handle);
-        fflush(xc->handle);
+        fstWriterFflush(xc, xc->handle);
         fstWriterFseeko(xc, xc->handle, fpos, SEEK_SET);
     }
 }
@@ -2438,7 +2507,7 @@ void fstWriterSetTimezero(fstWriterContext *xc, int64_t tim)
         fst_off_t fpos = ftello(xc->handle);
         fstWriterFseeko(xc, xc->handle, FST_HDR_OFFS_TIMEZERO, SEEK_SET);
         fstWriterUint64(xc->handle, (xc->timezero = tim));
-        fflush(xc->handle);
+        fstWriterFflush(xc, xc->handle);
         fstWriterFseeko(xc, xc->handle, fpos, SEEK_SET);
     }
 }
@@ -2497,6 +2566,27 @@ int fstWriterGetFseekFailed(fstWriterContext *xc)
     }
 
     return (0);
+}
+
+/*
+ * the errno of the first write that failed so far, 0 if none has; a failure in
+ * the writes that end the file is answered by fstWriterClose()
+ */
+int fstWriterGetWriteError(fstWriterContext *xc)
+{
+    int write_error = 0;
+
+    if (xc) {
+#ifdef FST_WRITER_PARALLEL
+        pthread_mutex_lock(&xc->mutex);
+#endif
+        write_error = xc->write_error;
+#ifdef FST_WRITER_PARALLEL
+        pthread_mutex_unlock(&xc->mutex);
+#endif
+    }
+
+    return (write_error);
 }
 
 static int fstWriterGetFlushContextPendingInternal(fstWriterContext *xc)

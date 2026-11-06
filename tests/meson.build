@@ -6,6 +6,7 @@ libfst_tests = [
     'packed_extent_wraps',
     'rvat_section_boundary',
     'write_and_read',
+    'write_error',
 ]
 
 foreach test : libfst_tests
