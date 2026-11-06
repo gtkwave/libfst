@@ -34,7 +34,7 @@ static int write_steps(const char *name, int steps, int parallel, int *close_err
     }
 
     int write_error = fstWriterGetWriteError(writer);
-    *close_error = fstWriterClose(writer);
+    *close_error = fstWriterClose2(writer);
     return write_error;
 }
 #endif

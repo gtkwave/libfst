@@ -1899,7 +1899,7 @@ void fstWriterFlushContext(fstWriterContext *xc)
  * close out FST file, answering the errno of the first write that failed, the
  * file's own close included, or 0 if none did
  */
-int fstWriterClose(fstWriterContext *xc)
+int fstWriterClose2(fstWriterContext *xc)
 {
     int write_error = 0;
 
@@ -2276,6 +2276,11 @@ int fstWriterClose(fstWriterContext *xc)
     return (write_error);
 }
 
+void fstWriterClose(fstWriterContext *xc)
+{
+    fstWriterClose2(xc);
+}
+
 /*
  * functions to set miscellaneous header/block information
  */
@@ -2570,7 +2575,7 @@ int fstWriterGetFseekFailed(fstWriterContext *xc)
 
 /*
  * the errno of the first write that failed so far, 0 if none has; a failure in
- * the writes that end the file is answered by fstWriterClose()
+ * the writes that end the file is answered by fstWriterClose2()
  */
 int fstWriterGetWriteError(fstWriterContext *xc)
 {
