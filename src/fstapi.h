@@ -375,6 +375,8 @@ struct fstETab
 typedef struct fstWriterContext fstWriterContext;
 
 void fstWriterClose(fstWriterContext *ctx);
+/* fstWriterClose, answering the errno of the first write that failed, or 0 */
+int fstWriterClose2(fstWriterContext *ctx);
 fstWriterContext *fstWriterCreate(const char *nam, int use_compressed_hier);
 fstEnumHandle fstWriterCreateEnumTable(fstWriterContext *ctx,
                                         const char *name,
@@ -428,6 +430,8 @@ void fstWriterEmitTimeChange(fstWriterContext *ctx, uint64_t tim);
 void fstWriterFlushContext(fstWriterContext *ctx);
 int fstWriterGetDumpSizeLimitReached(fstWriterContext *ctx);
 int fstWriterGetFseekFailed(fstWriterContext *ctx);
+/* the errno of the first write that failed so far, 0 if none has */
+int fstWriterGetWriteError(fstWriterContext *ctx);
 int fstWriterGetFlushContextPending(fstWriterContext *ctx);
 void fstWriterSetAttrBegin(fstWriterContext *ctx,
                             enum fstAttrType attrtype,
