@@ -10,6 +10,8 @@ typedef struct
 {
     int parallel; // fstWriterSetParallelMode()
     int flush_every; // fstWriterFlushContext() every that many time steps, 0 for never
+    uint64_t size_limit; // fstWriterSetDumpSizeLimit(), 0 for none
+    int blackouts; // fstWriterEmitDumpActive() off and on every 37 time steps
 } WriterSetup;
 
 #define MAX_VARS 64
@@ -62,6 +64,9 @@ static void write_trace(const char *name,
     // a fixed date, so that two files can be compared byte for byte
     fstWriterSetDate(writer, "write_parallel");
     fstWriterSetParallelMode(writer, setup->parallel);
+    if (setup->size_limit) {
+        fstWriterSetDumpSizeLimit(writer, setup->size_limit);
+    }
 
     fstWriterSetScope(writer, FST_ST_VCD_MODULE, "top", NULL);
     for (int i = 0; i < vars; i++) {
@@ -100,6 +105,9 @@ static void write_trace(const char *name,
             fstWriterEmitValueChange(writer, handles[i], value);
             g_ptr_array_add(written, change_text(time, handles[i], value, width));
         }
+        if (setup->blackouts && step % 37 == 36) {
+            fstWriterEmitDumpActive(writer, (step / 37) % 2);
+        }
         if (setup->flush_every && step % setup->flush_every == setup->flush_every - 1) {
             fstWriterFlushContext(writer);
         }
@@ -134,10 +142,16 @@ static GPtrArray *read_trace(const char *name)
     return read;
 }
 
-static void assert_changes_equal(GPtrArray *written, GPtrArray *read)
+// Under a size limit, the changes read back are the first ones written.
+static void assert_changes_equal(GPtrArray *written, GPtrArray *read, int size_limit)
 {
-    g_assert_cmpuint(read->len, ==, written->len);
-    for (guint i = 0; i < written->len; i++) {
+    if (size_limit) {
+        g_assert_cmpuint(read->len, >, 0);
+        g_assert_cmpuint(read->len, <, written->len);
+    } else {
+        g_assert_cmpuint(read->len, ==, written->len);
+    }
+    for (guint i = 0; i < read->len; i++) {
         g_assert_cmpstr(g_ptr_array_index(read, i), ==, g_ptr_array_index(written, i));
     }
 }
@@ -167,7 +181,7 @@ static void check_against_serial(const WriterSetup *setup, int steps, int vars)
     GPtrArray *written = g_ptr_array_new_with_free_func(g_free);
     write_trace("write_parallel.fst", setup, steps, vars, written);
     GPtrArray *read = read_trace("write_parallel.fst");
-    assert_changes_equal(written, read);
+    assert_changes_equal(written, read, setup->size_limit != 0);
     assert_files_equal("write_parallel_serial.fst", "write_parallel.fst");
 
     g_ptr_array_unref(read);
@@ -191,6 +205,14 @@ int main(int argc, char **argv)
     // Without explicit flushes, the close flushes the only block.
     parallel.flush_every = 0;
     check_against_serial(&parallel, 400, 64);
+
+    // A size limit that the file reaches after a few flushes: the dump stops at
+    // the flush that reached it, with the time and the blackouts the serial
+    // writer records.
+    WriterSetup limited = {.parallel = 1, .flush_every = 5, .size_limit = 60000};
+    check_against_serial(&limited, 400, 64);
+    limited.blackouts = 1;
+    check_against_serial(&limited, 400, 64);
 
     return 0;
 }
