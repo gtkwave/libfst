@@ -3228,9 +3228,13 @@ void fstWriterEmitTimeChange(fstWriterContext *xc, uint64_t tim)
         } else {
             if (fstWriterGetFlushContextPendingInternal(xc)) {
                 xc->flush_context_pending = 0;
-                fstWriterFlushContextPrivate(xc);
-                xc->tchn_cnt++;
-                fstWriterVarint(xc->tchn_handle, xc->curtime);
+                /* a block without value changes is not flushed, so its time
+                 * steps stay in the time table, which then goes on */
+                if (xc->vchg_siz > 1) {
+                    fstWriterFlushContextPrivate(xc);
+                    xc->tchn_cnt++;
+                    fstWriterVarint(xc->tchn_handle, xc->curtime);
+                }
             }
         }
 
