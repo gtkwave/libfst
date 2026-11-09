@@ -744,6 +744,13 @@ struct fstWriterContext
     unsigned parallel_enabled : 1;
     unsigned parallel_was_enabled : 1;
 
+    /* set by a parallel flush thread that reached dump_size_limit, under the
+     * mutex, and applied by the writer (fstWriterApplyThreadSizeLimit), so that
+     * the thread writes none of the bit-fields above, which the writer changes */
+    unsigned char size_limit_reached_in_thread;
+    uint64_t flush_dispatch_time; /* the time step at which the flush was started */
+    uint64_t size_limit_curtime; /* that time, for the flush that reached the limit */
+
     /* should really be semaphores, but are bytes to cut down on read-modify-write window size */
     unsigned char already_in_flush; /* in case control-c handlers interrupt */
     unsigned char already_in_close; /* in case control-c handlers interrupt */
@@ -1767,10 +1774,16 @@ static void fstWriterFlushContextPrivate(fstWriterContext *xc)
     xc2->section_header_truncpos = endpos; /* cache in case of need to truncate */
     if (xc->dump_size_limit) {
         if (endpos >= ((fst_off_t)xc->dump_size_limit)) {
-            xc2->skip_writing_section_hdr = 1;
-            xc2->size_limit_locked = 1;
-            xc2->is_initial_time = 1; /* to trick emit value and emit time change */
-            xc->skip_writing_section_hdr = 1; /* a parallel flush thread's own copy */
+            if (xc2 != xc) {
+                /* a parallel flush thread: the writer applies the stop */
+                xc2->size_limit_curtime = xc->flush_dispatch_time;
+                xc2->size_limit_reached_in_thread = 1;
+                xc->skip_writing_section_hdr = 1;
+            } else {
+                xc->skip_writing_section_hdr = 1;
+                xc->size_limit_locked = 1;
+                xc->is_initial_time = 1; /* to trick emit value and emit time change */
+            }
 #ifdef FST_DEBUG
             fprintf(stderr, FST_APIMESS "<< dump file size limit reached, stopping dumping >>\n");
 #endif
@@ -1813,11 +1826,49 @@ static void *fstWriterFlushContextPrivate1(void *ctx)
 }
 
 /*
+ * a parallel flush thread reached the dump size limit: stop dumping as the
+ * serial flush does at that flush, dropping what was emitted since; called by
+ * the writer once the thread is done. Returns 1 if it stopped the dump.
+ */
+static int fstWriterApplyThreadSizeLimit(fstWriterContext *xc)
+{
+    unsigned int i;
+    struct fstBlackoutChain *b;
+
+    if (!xc->size_limit_reached_in_thread) {
+        return (0);
+    }
+    xc->size_limit_reached_in_thread = 0;
+    xc->skip_writing_section_hdr = 1;
+    xc->size_limit_locked = 1;
+    xc->is_initial_time = 1; /* to trick emit value and emit time change */
+    xc->curtime = xc->size_limit_curtime; /* the serial writer's time stops there */
+    for (b = xc->blackout_head; b; b = b->next) {
+        if (b->tim > xc->curtime) { /* the serial writer records them at that time */
+            b->tim = xc->curtime;
+        }
+    }
+
+    xc->vchg_mem[0] = '!';
+    xc->vchg_siz = 1;
+    for (i = 0; i < xc->maxhandle; i++) {
+        uint32_t *vm4ip = &(xc->valpos_mem[4 * i]);
+        vm4ip[2] = 0; /* zero out offset val */
+        vm4ip[3] = 0; /* zero out last time change val */
+    }
+    xc->tchn_cnt = xc->tchn_idx = 0;
+    fstWriterFseeko(xc, xc->tchn_handle, 0, SEEK_SET);
+    fstFtruncate(fileno(xc->tchn_handle), 0);
+    return (1);
+}
+
+/*
  * wait until the parallel flush thread is done: in_pthread is read under the
  * mutex, which the thread holds while it flushes and while it clears
- * in_pthread, so what the thread wrote to this context is visible here
+ * in_pthread, so what the thread wrote to this context is visible here. Then
+ * apply the thread's size limit stop; returns 1 if it stopped the dump.
  */
-static void fstWriterWaitFlushThread(fstWriterContext *xc)
+static int fstWriterWaitFlushThread(fstWriterContext *xc)
 {
     for (;;) {
         int busy;
@@ -1829,9 +1880,15 @@ static void fstWriterWaitFlushThread(fstWriterContext *xc)
             break;
         }
     }
+
+    return (fstWriterApplyThreadSizeLimit(xc));
 }
 
-static void fstWriterFlushContextPrivate(fstWriterContext *xc)
+/*
+ * returns 1 if, instead of flushing, it stopped the dump at the size limit
+ * that an earlier flush thread reached
+ */
+static int fstWriterFlushContextPrivate(fstWriterContext *xc)
 {
     if (xc->parallel_enabled) {
         struct fstWriterContext *xc2;
@@ -1839,9 +1896,11 @@ static void fstWriterFlushContextPrivate(fstWriterContext *xc)
 
         /* the previous flush thread writes the section start, the truncation
          * position and the next section header: the copy is made after it is done */
-        fstWriterWaitFlushThread(xc);
+        if (fstWriterWaitFlushThread(xc)) {
+            return (1);
+        }
         if (xc->vchg_siz <= 1) {
-            return; /* no value change to flush: the serial flush returns too */
+            return (0); /* no value change to flush: the serial flush returns too */
         }
 
         xc2 = (struct fstWriterContext *)malloc(sizeof(struct fstWriterContext));
@@ -1894,12 +1953,16 @@ static void fstWriterFlushContextPrivate(fstWriterContext *xc)
     } else {
         if (xc->parallel_was_enabled) /* conservatively block */
         {
-            fstWriterWaitFlushThread(xc);
+            if (fstWriterWaitFlushThread(xc)) {
+                return (1);
+            }
         }
 
         xc->xc_parent = xc;
         fstWriterFlushContextPrivate2(xc);
     }
+
+    return (0);
 }
 #endif
 
@@ -1958,6 +2021,7 @@ int fstWriterClose2(fstWriterContext *xc)
                                                  xc->curval_mem + xc->valpos_mem[4 * dupe_idx]);
                     }
                 }
+                xc->flush_dispatch_time = xc->curtime;
                 fstWriterFlushContextPrivate(xc);
 #ifdef FST_WRITER_PARALLEL
                 fstWriterWaitFlushThread(xc);
@@ -2572,7 +2636,15 @@ void fstWriterSetDumpSizeLimit(fstWriterContext *xc, uint64_t numbytes)
 int fstWriterGetDumpSizeLimitReached(fstWriterContext *xc)
 {
     if (xc) {
-        return (xc->size_limit_locked != 0);
+        int reached = (xc->size_limit_locked != 0);
+#ifdef FST_WRITER_PARALLEL
+        /* a flush thread holds the mutex while it flushes: it is not waited for */
+        if (!reached && (pthread_mutex_trylock(&xc->mutex) == 0)) {
+            reached = (xc->size_limit_reached_in_thread != 0);
+            pthread_mutex_unlock(&xc->mutex);
+        }
+#endif
+        return (reached);
     }
 
     return (0);
@@ -3245,7 +3317,15 @@ void fstWriterEmitTimeChange(fstWriterContext *xc, uint64_t tim)
                 /* a block without value changes is not flushed, so its time
                  * steps stay in the time table, which then goes on */
                 if (xc->vchg_siz > 1) {
+                    xc->flush_dispatch_time = tim;
+#ifdef FST_WRITER_PARALLEL
+                    if (fstWriterFlushContextPrivate(xc)) {
+                        /* an earlier flush thread reached the size limit: time stops there */
+                        return;
+                    }
+#else
                     fstWriterFlushContextPrivate(xc);
+#endif
                     xc->tchn_cnt++;
                     fstWriterVarint(xc->tchn_handle, xc->curtime);
                 }
