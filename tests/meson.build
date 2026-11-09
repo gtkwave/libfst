@@ -2,6 +2,7 @@ libfst_tests = [
     'attr_enum_value_type',
     'chain_table_across_sections',
     'empty_file',
+    'flush_without_changes',
     'mask_no_variables',
     'packed_extent_wraps',
     'rvat_section_boundary',
