@@ -20,6 +20,18 @@ foreach test : libfst_tests
     test(test, exe)
 endforeach
 
+# The parallel writer needs threads (FST_WRITER_PARALLEL).
+if thread_dep.found()
+    test(
+        'write_parallel',
+        executable(
+            'test-write_parallel',
+            'write_parallel.c',
+            dependencies: [libfst_dep, glib_dep],
+        ),
+    )
+endif
+
 # The malformed file corpus is read from the source tree rather than written by
 # the test, so the case file is handed to it as an argument.  One test per case,
 # so that a file the reader does not survive names itself and stops nothing else.

@@ -1770,13 +1770,14 @@ static void fstWriterFlushContextPrivate(fstWriterContext *xc)
             xc2->skip_writing_section_hdr = 1;
             xc2->size_limit_locked = 1;
             xc2->is_initial_time = 1; /* to trick emit value and emit time change */
+            xc->skip_writing_section_hdr = 1; /* a parallel flush thread's own copy */
 #ifdef FST_DEBUG
             fprintf(stderr, FST_APIMESS "<< dump file size limit reached, stopping dumping >>\n");
 #endif
         }
     }
 
-    if (!xc2->skip_writing_section_hdr) {
+    if (!xc->skip_writing_section_hdr) {
         fstWriterEmitSectionHeader(xc); /* emit next section header */
     }
     fstWriterFflush(xc, xc->handle);
@@ -1811,16 +1812,39 @@ static void *fstWriterFlushContextPrivate1(void *ctx)
     return (NULL);
 }
 
+/*
+ * wait until the parallel flush thread is done: in_pthread is read under the
+ * mutex, which the thread holds while it flushes and while it clears
+ * in_pthread, so what the thread wrote to this context is visible here
+ */
+static void fstWriterWaitFlushThread(fstWriterContext *xc)
+{
+    for (;;) {
+        int busy;
+
+        pthread_mutex_lock(&xc->mutex);
+        busy = xc->in_pthread;
+        pthread_mutex_unlock(&xc->mutex);
+        if (!busy) {
+            break;
+        }
+    }
+}
+
 static void fstWriterFlushContextPrivate(fstWriterContext *xc)
 {
     if (xc->parallel_enabled) {
-        struct fstWriterContext *xc2 =
-            (struct fstWriterContext *)malloc(sizeof(struct fstWriterContext));
+        struct fstWriterContext *xc2;
         unsigned int i;
 
-        pthread_mutex_lock(&xc->mutex);
-        pthread_mutex_unlock(&xc->mutex);
+        /* the previous flush thread writes the section start, the truncation
+         * position and the next section header: the copy is made after it is done */
+        fstWriterWaitFlushThread(xc);
+        if (xc->vchg_siz <= 1) {
+            return; /* no value change to flush: the serial flush returns too */
+        }
 
+        xc2 = (struct fstWriterContext *)malloc(sizeof(struct fstWriterContext));
         xc->xc_parent = xc;
         memcpy(xc2, xc, sizeof(struct fstWriterContext));
 
@@ -1857,13 +1881,10 @@ static void fstWriterFlushContextPrivate(fstWriterContext *xc)
         fstWriterFseeko(xc, xc->tchn_handle, 0, SEEK_SET);
         fstFtruncate(fileno(xc->tchn_handle), 0);
 
-        xc->section_header_only = 0;
+        /* the flush thread ends the file with the next section's header, as the
+         * serial flush does, which the close truncates if no value change follows */
+        xc->section_header_only = !xc->skip_writing_section_hdr;
         xc->secnum++;
-
-        while (xc->in_pthread) {
-            pthread_mutex_lock(&xc->mutex);
-            pthread_mutex_unlock(&xc->mutex);
-        };
 
         pthread_mutex_lock(&xc->mutex);
         xc->in_pthread = 1;
@@ -1873,8 +1894,7 @@ static void fstWriterFlushContextPrivate(fstWriterContext *xc)
     } else {
         if (xc->parallel_was_enabled) /* conservatively block */
         {
-            pthread_mutex_lock(&xc->mutex);
-            pthread_mutex_unlock(&xc->mutex);
+            fstWriterWaitFlushThread(xc);
         }
 
         xc->xc_parent = xc;
@@ -1905,8 +1925,8 @@ int fstWriterClose2(fstWriterContext *xc)
 
 #ifdef FST_WRITER_PARALLEL
     if (xc) {
-        pthread_mutex_lock(&xc->mutex);
-        pthread_mutex_unlock(&xc->mutex);
+        /* the flush thread writes the section state read below */
+        fstWriterWaitFlushThread(xc);
     }
 #endif
 
@@ -1940,13 +1960,7 @@ int fstWriterClose2(fstWriterContext *xc)
                 }
                 fstWriterFlushContextPrivate(xc);
 #ifdef FST_WRITER_PARALLEL
-                pthread_mutex_lock(&xc->mutex);
-                pthread_mutex_unlock(&xc->mutex);
-
-                while (xc->in_pthread) {
-                    pthread_mutex_lock(&xc->mutex);
-                    pthread_mutex_unlock(&xc->mutex);
-                };
+                fstWriterWaitFlushThread(xc);
 #endif
             }
         }
