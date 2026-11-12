@@ -5068,6 +5068,7 @@ static int fstReaderParseChainTable(unsigned char *chain_cmem,
     fstHandle pidx = 0;
     uint64_t pval = 0;
     uint32_t prev_alias = 0;
+    int have_physical_chain = 0;
     fstHandle i;
 
     /* check if there is space for `n` more entries */
@@ -5086,10 +5087,11 @@ static int fstReaderParseChainTable(unsigned char *chain_cmem,
 
                 if (shval > 0) {
                     pval = chain_table[idx] = pval + shval;
-                    if (idx) {
+                    if (have_physical_chain) {
                         chain_table_lengths[pidx] = pval - chain_table[pidx];
                     }
                     pidx = idx++;
+                    have_physical_chain = 1;
                 } else if (shval < 0) {
                     chain_table[idx] =
                         0; /* need to explicitly zero as calloc above might not run */
@@ -5112,7 +5114,9 @@ static int fstReaderParseChainTable(unsigned char *chain_cmem,
                 }
 
                 for (i = 0; i < loopcnt; i++) {
-                    chain_table[idx++] = 0;
+                    chain_table[idx] = 0;
+                    chain_table_lengths[idx] = 0;
+                    idx++;
                 }
             }
 
@@ -5145,10 +5149,11 @@ static int fstReaderParseChainTable(unsigned char *chain_cmem,
                 }
 
                 pval = chain_table[idx] = pval + (val >> 1);
-                if (idx) {
+                if (have_physical_chain) {
                     chain_table_lengths[pidx] = pval - chain_table[pidx];
                 }
                 pidx = idx++;
+                have_physical_chain = 1;
             } else {
                 fstHandle loopcnt = val >> 1;
 
@@ -5157,7 +5162,9 @@ static int fstReaderParseChainTable(unsigned char *chain_cmem,
                 }
 
                 for (i = 0; i < loopcnt; i++) {
-                    chain_table[idx++] = 0;
+                    chain_table[idx] = 0;
+                    chain_table_lengths[idx] = 0;
+                    idx++;
                 }
             }
 
@@ -5170,7 +5177,8 @@ static int fstReaderParseChainTable(unsigned char *chain_cmem,
     /* the entry the room check kept back, so that the last chain a length was
        written to is as long as the distance from it to the end of the data */
     chain_table[idx] = vc_len;
-    chain_table_lengths[pidx] = chain_table[idx] - chain_table[pidx];
+    if (have_physical_chain)
+        chain_table_lengths[pidx] = chain_table[idx] - chain_table[pidx];
 
     for (i = 0; i < idx; i++) {
         int32_t v32 = chain_table_lengths[i];
@@ -5774,7 +5782,9 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
                         unsigned char *mc; /* comp:   src */
                         unsigned long destlen = val;
 
-                        if (((uint64_t)traversal_mem_offs + destlen) > mem_required_for_traversal) {
+                        if ((uint64_t)traversal_mem_offs > mem_required_for_traversal ||
+                            (uint64_t)val > mem_required_for_traversal - traversal_mem_offs ||
+                            (uint64_t)val > UINT32_MAX - traversal_mem_offs) {
                             goto block_err;
                         }
 
@@ -5816,7 +5826,9 @@ int fstReaderIterBlocks2(fstReaderContext *ctx,
                         uint32_t destlen = sourcelen;
                         unsigned char *mu = mem_for_traversal + traversal_mem_offs;
 
-                        if (((uint64_t)traversal_mem_offs + destlen) > mem_required_for_traversal) {
+                        if ((uint64_t)traversal_mem_offs > mem_required_for_traversal ||
+                            (uint64_t)destlen > mem_required_for_traversal - traversal_mem_offs ||
+                            (uint64_t)destlen > UINT32_MAX - traversal_mem_offs) {
                             goto block_err;
                         }
 
